@@ -17,9 +17,9 @@ static func table() -> Dictionary:
 	return {
 		"s01_hero_day": {"kind": "game", "preset": "day", "focus": tc(6.4, 9.6), "size": 215.0, "dist": 150.0, "sdfgi_cell": 0.9, "voxel_extent": 440.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
 		"s01_hero_dusk": {"kind": "game", "preset": "dusk", "focus": tc(6.4, 9.6), "size": 215.0, "dist": 150.0, "sdfgi_cell": 0.9, "voxel_extent": 440.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
-		"s02_far": {"kind": "game", "preset": "day", "focus": tc(9.0, 8.6), "size": 540.0, "dist": 260.0, "sdfgi_cell": 2.0, "voxel_extent": 580.0, "grid": true, "yaw": 0.0, "tilt": 25.0, "w": 1920, "h": 1080},
-		"s03_near_block": {"kind": "game", "preset": "day", "focus": tc(6.0, 9.0), "size": 66.0, "dist": 100.0, "sdfgi_cell": 0.5, "voxel_extent": 240.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
-		"s03_near_block_dusk": {"kind": "game", "preset": "dusk", "focus": tc(6.0, 9.0), "size": 66.0, "dist": 100.0, "sdfgi_cell": 0.5, "voxel_extent": 240.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
+		"s02_far": {"kind": "game", "preset": "day", "focus": tc(9.0, 8.6), "size": 540.0, "dist": 260.0, "sdfgi_cell": 2.0, "voxel_extent": 1100.0, "voxel_subdiv": 256, "grid": true, "yaw": 0.0, "tilt": 25.0, "w": 1920, "h": 1080},
+		"s03_near_block": {"kind": "game", "preset": "day", "focus": tc(3.6, 11.2), "size": 86.0, "dist": 110.0, "sdfgi_cell": 0.5, "voxel_extent": 300.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
+		"s03_near_block_dusk": {"kind": "game", "preset": "dusk", "focus": tc(3.6, 11.2), "size": 86.0, "dist": 110.0, "sdfgi_cell": 0.5, "voxel_extent": 300.0, "yaw": 28.0, "tilt": 25.0, "w": 1920, "h": 1080},
 		"dev_lot": {"kind": "game", "preset": "day", "focus": tc(6.0, 9.0), "size": 40.0, "dist": 100.0, "sdfgi_cell": 0.5, "voxel_extent": 240.0, "yaw": 0.0, "tilt": 8.0, "w": 1920, "h": 1080},
 		"dev_street_day": {"kind": "cine", "preset": "day", "pos": tc(5.0, 11.6) + Vector3(0, 2.3, 0), "look": tc(5.0, 7.0) + Vector3(0, 9.0, 0), "fov": 62.0, "voxel_extent": 300.0, "voxel_center": tc(5.0, 9.0), "w": 1920, "h": 1080},
 		"dev_street_dusk": {"kind": "cine", "preset": "dusk", "pos": tc(5.0, 11.6) + Vector3(0, 2.3, 0), "look": tc(5.0, 7.0) + Vector3(0, 9.0, 0), "fov": 62.0, "voxel_extent": 300.0, "voxel_center": tc(5.0, 9.0), "w": 1920, "h": 1080},
@@ -48,6 +48,6 @@ static func make_camera(shot: Dictionary, cam: Camera3D) -> void:
 		cam.projection = Camera3D.PROJECTION_PERSPECTIVE
 		cam.fov = shot["fov"]
 		cam.near = 0.2
-		cam.far = 1800.0
+		cam.far = 7000.0
 		cam.transform = Transform3D(Basis.IDENTITY, shot["pos"])
 		cam.look_at(shot["look"], Vector3.UP)

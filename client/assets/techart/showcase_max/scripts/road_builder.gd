@@ -261,6 +261,6 @@ func _pads() -> void:
 				bp.box(Vector3(rr.position.x, -0.12, rr.position.y), Vector3(rr.end.x, CH, rr.end.y), Color.WHITE, 0x33, 1.0)
 
 func _terrain() -> void:
-	var r := 900.0
+	var r := 6000.0
 	var bt := b("terrain")
 	bt.rect_xz(-r, -r, r, r, -0.06, true, 1.0)

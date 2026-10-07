@@ -23,8 +23,6 @@ No map is larger than 2K. Everything else in the package (road markings, facades
 | Concrete Floor Worn 001 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/concrete_floor_worn_001 | curbs, plinths, roof slabs |
 | Brick Wall 006 | Jan Burghardt | https://polyhaven.com/a/brick_wall_006 | R facades |
 | Beige Wall 002 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/beige_wall_002 | R plaster, C spandrels |
-| Concrete Wall 003 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/concrete_wall_003 | downloaded, tried on C walls, replaced (reads as dirty marble) |
-| Granite Tile 03 | Charlotte Baglioni | https://polyhaven.com/a/granite_tile_03 | downloaded, tried on C ground floors, replaced |
 | Grey Plaster | Rob Tuytel | https://polyhaven.com/a/grey_plaster | C ribbon and curtain-wall spandrel walls |
 | Rectangular Facade Tiles | Charlotte Baglioni | https://polyhaven.com/a/rectangular_facade_tiles | C ground floor and podium cladding |
 | Factory Wall | Rob Tuytel | https://polyhaven.com/a/factory_wall | I cladding (corrugated) |
@@ -36,4 +34,4 @@ No map is larger than 2K. Everything else in the package (road markings, facades
 | Floor Pattern 02 | Rob Tuytel | https://polyhaven.com/a/floor_pattern_02 | plazas |
 | Gravel Embedded Concrete | Charlotte Baglioni | https://polyhaven.com/a/gravel_embedded_concrete | industrial yards |
 
-Reused from the M1 package (`client/assets/techart/roads_interchange/`, in-repo, not edited): faction and overlay materials `mat_faction_a/b`, `mat_service_power`, `mat_road_congestion`.
+Overlay colours (faction A/B, zone R/C/I, power, congestion) are the palette hex values from `docs/briefs/art-visual-source.md`, rendered by `shaders/overlay.gdshader` through a tonemap-compensated palette table. No material or script from the M1 package (`client/assets/techart/roads_interchange/`) is loaded by this package.

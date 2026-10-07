@@ -22,8 +22,6 @@ MATERIALS = {
     "concrete_floor_worn_001": ("2k", "1k", "1k"),
     "brick_wall_006": ("2k", "2k", "1k"),
     "beige_wall_002": ("2k", "1k", "1k"),
-    "concrete_wall_003": ("1k", "1k", "1k"),
-    "granite_tile_03": ("1k", "1k", "1k"),
     "factory_wall": ("1k", "1k", "1k"),
     "corrugated_iron_02": ("1k", "1k", "1k"),
     "concrete_wall_008": ("1k", "1k", "1k"),

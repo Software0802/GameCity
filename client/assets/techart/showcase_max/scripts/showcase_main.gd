@@ -109,7 +109,7 @@ func _apply_shot(name: String) -> void:
 	if fx.get("gi", "sdfgi") == "voxel":
 		var fcs: Vector3 = shot.get("voxel_center", shot.get("focus", shot.get("look", Vector3.ZERO)))
 		var ext := float(fx.get("voxel_extent", shot.get("voxel_extent", 340.0)))
-		world.setup_voxel_gi(Vector3(fcs.x, 45.0, fcs.z), Vector3(ext, 120.0, ext), int(fx.get("voxel_subdiv", 256)), light.sun)
+		world.setup_voxel_gi(Vector3(fcs.x, 45.0, fcs.z), Vector3(ext, 120.0, ext), int(shot.get("voxel_subdiv", fx.get("voxel_subdiv", 512))), light.sun)
 	else:
 		world.disable_voxel_gi()
 	if world.has_method("apply_preset"):
@@ -192,6 +192,17 @@ func _measure(frames: int) -> Dictionary:
 		"vram_mb": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
 	}
 
+func _bench_apply(shot_name: String, base_profile: String, ov: Dictionary) -> void:
+	fx = Quality.profile(base_profile)
+	for k in ov:
+		fx[k] = ov[k]
+	Quality.apply_server(fx)
+	sv.size = Vector2i(1920, 1080)
+	Quality.apply_viewport(sv, fx)
+	_apply_shot(shot_name)
+
+## Each variant is timed between two reference measurements of the same shot with the tier's default settings.
+## The M4 throttles under sustained load, so only the delta to the neighbouring reference is meaningful.
 func _run_bench() -> void:
 	var groups := OS.get_environment("CITY_SHOWCASE_BENCH_GROUPS")
 	var only: Array = Array(groups.split(",", false)) if groups != "" else []
@@ -206,41 +217,54 @@ func _run_bench() -> void:
 		if parsed is Dictionary:
 			results = parsed
 	var crop := Rect2i(700, 330, 640, 360)
+	var settle := int(OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE")) if OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE") != "" else 80
 	for entry in BenchPlan.entries():
 		var group: String = entry[0]
 		if not only.is_empty() and not (group in only):
 			continue
 		var tag: String = entry[1]
+		if results.has("%s/%s" % [group, tag]) and OS.get_environment("CITY_SHOWCASE_BENCH_RESUME") == "1":
+			continue
 		var shot_name: String = entry[2]
 		var ov: Dictionary = entry[3].duplicate()
 		var base_profile := "interactive" if ov.get("profile", "") == "interactive" else "shot"
 		ov.erase("profile")
-		fx = Quality.profile(base_profile)
-		for k in ov:
-			fx[k] = ov[k]
-		Quality.apply_server(fx)
-		sv.size = Vector2i(1920, 1080)
-		Quality.apply_viewport(sv, fx)
-		_apply_shot(shot_name)
-		await _settle(110)
-		var ms := await _measure_draw(60)
-		var row := {"group": group, "tag": tag, "shot": shot_name, "draw_ms": snappedf(ms, 0.01), "profile": base_profile,
-			"fx": ov, "vram_mb": snappedf(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0, 0.1),
-			"draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
-			"prims": Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)}
+		# reference (before)
+		_bench_apply(shot_name, base_profile, {})
+		await _settle(settle)
+		var ref_a := await _measure_draw(40)
+		# variant
+		_bench_apply(shot_name, base_profile, ov)
+		await _settle(settle)
+		var pm := await _measure(40)
+		var ms := await _measure_draw(40)
+		var rec_vram := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0
+		var rec_calls := Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		var rec_prims := Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
 		var mode: String = entry[4]
+		var shot_img: Image = null
 		if mode != "":
 			await get_tree().process_frame
-			var img := sv.get_texture().get_image()
+			shot_img = sv.get_texture().get_image()
+		var eff := {"msaa_3d": sv.msaa_3d, "taa": sv.use_taa, "ssaa": sv.screen_space_aa, "scaling_mode": sv.scaling_3d_mode, "scale": sv.scaling_3d_scale}
+		# reference (after)
+		_bench_apply(shot_name, base_profile, {})
+		await _settle(settle)
+		var ref_b := await _measure_draw(40)
+		var ref := (ref_a + ref_b) * 0.5
+		var row := {"group": group, "tag": tag, "shot": shot_name, "profile": base_profile, "fx": ov, "effective": eff,
+			"draw_ms": snappedf(ms, 0.01), "ref_ms": snappedf(ref, 0.01), "delta_ms": snappedf(ms - ref, 0.01),
+			"proc_ms": snappedf(pm["proc_ms"], 0.01), "wall_ms": snappedf(pm["wall_ms"], 0.01),
+			"vram_mb": snappedf(rec_vram, 0.1), "draw_calls": rec_calls, "prims": rec_prims}
+		if shot_img != null:
 			if mode == "crop":
-				img = img.get_region(crop)
+				shot_img = shot_img.get_region(crop)
 			else:
-				img.resize(960, 540, Image.INTERPOLATE_LANCZOS)
-			var fp := "%s/%s_%s.png" % [cmp_dir, group, tag]
-			img.save_png(fp)
+				shot_img.resize(480, 270, Image.INTERPOLATE_LANCZOS)
+			shot_img.save_png("%s/%s_%s.png" % [cmp_dir, group, tag])
 			row["image"] = "compare/%s_%s.png" % [group, tag]
 		results["%s/%s" % [group, tag]] = row
-		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
+		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " ref=", row["ref_ms"], " delta=", row["delta_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
 		var wf := FileAccess.open(res_path, FileAccess.WRITE)
 		wf.store_string(JSON.stringify(results, "\t"))
 		wf.close()

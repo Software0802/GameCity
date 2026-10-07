@@ -190,12 +190,12 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 	var cine := (kind == "cine")
 	env.fog_enabled = bool(fx.get("fog", true)) and cine
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_light_color = Color(0.62, 0.72, 0.86) if day else Color(0.95, 0.60, 0.45)
+	env.fog_light_color = Color(0.62, 0.72, 0.86) if day else Color(0.80, 0.55, 0.52)
 	env.fog_light_energy = 1.0
-	env.fog_density = 0.00022 if day else 0.0005
+	env.fog_density = 0.00022 if day else 0.00042
 	env.fog_aerial_perspective = 0.35
 	env.fog_sun_scatter = 0.25 if day else 0.55
-	env.fog_sky_affect = 0.0
+	env.fog_sky_affect = 0.0 if day else 0.55
 	env.volumetric_fog_enabled = bool(fx.get("vfog", true)) and cine
 	env.volumetric_fog_density = float(fx.get("vfog_density", 0.0009 if day else 0.0013))
 	env.volumetric_fog_albedo = Color(0.9, 0.93, 1.0) if day else Color(1.0, 0.78, 0.62)
