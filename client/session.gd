@@ -16,6 +16,7 @@ var last_score: ScoreTick = null
 var _tiles: Dictionary = {}
 var _edges: Dictionary = {}
 var _summaries: Dictionary = {}
+var _subscribed: Dictionary = {}
 var _pending: Array[GameCommand] = []
 
 
@@ -127,6 +128,8 @@ func _apply(event: ServerEvent) -> void:
 			match_end = null
 			_tiles.clear()
 			_edges.clear()
+			_summaries.clear()
+			_subscribed.clear()
 			_pending.clear()
 			rejects.clear()
 			last_reject = null
@@ -138,17 +141,24 @@ func _apply(event: ServerEvent) -> void:
 			if event.tile_delta == null:
 				return
 			var tile := TileDelta.from_dict(event.tile_delta.to_dict())
+			if not _block_open(tile.x, tile.y):
+				_tiles.erase(tile.id)
+				return
 			_tiles[tile.id] = tile
 			_clear_pending_tile(tile.x, tile.y)
 		ServerEvent.Kind.EDGE_DELTA:
 			if event.edge_delta == null:
 				return
-			var key := WorldState.edge_key(event.edge_delta.a, event.edge_delta.b)
-			if event.edge_delta.removed:
+			var delta := event.edge_delta
+			var key := WorldState.edge_key(delta.a, delta.b)
+			if not _edge_open(delta.a, delta.b):
+				_edges.erase(key)
+				return
+			if delta.removed:
 				_edges.erase(key)
 			else:
-				_edges[key] = EdgeDelta.from_dict(event.edge_delta.to_dict())
-			_clear_pending_edge(event.edge_delta.a, event.edge_delta.b)
+				_edges[key] = EdgeDelta.from_dict(delta.to_dict())
+			_clear_pending_edge(delta.a, delta.b)
 		ServerEvent.Kind.REJECT:
 			if event.reject == null:
 				return
@@ -156,7 +166,9 @@ func _apply(event: ServerEvent) -> void:
 			rejects.append(event.reject)
 			_clear_pending_command(event.reject.command)
 		ServerEvent.Kind.INTEREST_UPDATE:
-			pass
+			if event.interest_update == null:
+				return
+			_apply_interest(event.interest_update)
 		ServerEvent.Kind.REGION_SUMMARY:
 			if event.region_summary != null and event.region_summary.interest != null:
 				_summaries[event.region_summary.interest.key()] = event.region_summary
@@ -177,6 +189,35 @@ func _apply(event: ServerEvent) -> void:
 			last_score = event.score_tick
 		ServerEvent.Kind.CRISIS_EVENT:
 			pass
+
+
+func _apply_interest(update: InterestUpdate) -> void:
+	for block in update.add:
+		if block != null:
+			_subscribed[block.key()] = true
+	for block in update.remove:
+		if block != null:
+			_subscribed.erase(block.key())
+	_forget_outside_subscription()
+
+
+func _forget_outside_subscription() -> void:
+	for id in _tiles.keys():
+		var body: TileDelta = _tiles[id]
+		if not _block_open(body.x, body.y):
+			_tiles.erase(id)
+	for key in _edges.keys():
+		var body: EdgeDelta = _edges[key]
+		if not _edge_open(body.a, body.b):
+			_edges.erase(key)
+
+
+func _block_open(x: int, y: int) -> bool:
+	return _subscribed.has(InterestId.from_tile(x, y).key())
+
+
+func _edge_open(a: Vector2i, b: Vector2i) -> bool:
+	return _block_open(a.x, a.y) or _block_open(b.x, b.y)
 
 
 func _clear_pending_tile(x: int, y: int) -> void:

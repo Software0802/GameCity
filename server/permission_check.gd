@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_check_parse(errors)
 	_check_permissions(errors)
 	_check_power_tick_interest(errors)
+	_check_client_interest_cache(errors)
 	if errors.is_empty():
 		print("PERMISSION_OK")
 		quit(0)
@@ -137,6 +138,52 @@ func _check_power_tick_interest(errors: Array[String]) -> void:
 	for block in world.interest_for(faction_a, InterestId.new(3, 3)):
 		with_camera[block.key()] = true
 	_expect(errors, with_camera.has("3,3") and with_camera.has("0,0"), "camera block")
+
+
+func _check_client_interest_cache(errors: Array[String]) -> void:
+	# load() at runtime, after the GameNet autoload exists. A parse-time
+	# ClientSession reference compiles session.gd before that autoload.
+	var session = load("res://client/session.gd").new()
+	var far := TileDelta.from_cell(40, 40)
+	far.owner = SliceConstants.Owner.FACTION_B
+	session._apply(ServerEvent.with_tile_delta(far))
+	_expect(errors, session.tile(40, 40) == null, "delta outside subscription is not cached")
+
+	var update := InterestUpdate.new()
+	update.add = [
+		InterestId.from_tile(1, 1),
+		InterestId.from_tile(8, 0),
+		InterestId.from_tile(40, 40),
+	]
+	session._apply(ServerEvent.with_interest_update(update))
+	var near := TileDelta.from_cell(1, 1)
+	near.owner = SliceConstants.Owner.FACTION_A
+	var span := EdgeDelta.new()
+	span.a = Vector2i(7, 0)
+	span.b = Vector2i(8, 0)
+	var far_edge := EdgeDelta.new()
+	far_edge.a = Vector2i(40, 40)
+	far_edge.b = Vector2i(41, 40)
+	session._apply(ServerEvent.with_tile_delta(near))
+	session._apply(ServerEvent.with_tile_delta(far))
+	session._apply(ServerEvent.with_edge_delta(span))
+	session._apply(ServerEvent.with_edge_delta(far_edge))
+	_expect(errors, session.tile(1, 1) != null and session.tile(40, 40) != null, "subscribed tiles cached")
+	_expect(errors, session.edge(span.a, span.b) != null and session.edge(far_edge.a, far_edge.b) != null, "subscribed edges cached")
+
+	var leave_far := InterestUpdate.new()
+	leave_far.remove = [InterestId.from_tile(40, 40)]
+	session._apply(ServerEvent.with_interest_update(leave_far))
+	_expect(errors, session.tile(1, 1) != null, "tile in a block that stayed")
+	_expect(errors, session.tile(40, 40) == null, "tile left with its block")
+	_expect(errors, session.edge(far_edge.a, far_edge.b) == null, "edge left with its block")
+	_expect(errors, session.edge(span.a, span.b) != null, "edge kept while one end stays subscribed")
+
+	var leave_span := InterestUpdate.new()
+	leave_span.remove = [InterestId.from_tile(1, 1), InterestId.from_tile(8, 0)]
+	session._apply(ServerEvent.with_interest_update(leave_span))
+	_expect(errors, session.tile(1, 1) == null and session.edge(span.a, span.b) == null, "cache empty after last blocks leave")
+	session.free()
 
 
 func _has_kind(events: Array, kind: int) -> bool:
