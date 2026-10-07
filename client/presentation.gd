@@ -46,7 +46,6 @@ var _was_started := false
 
 
 func _ready() -> void:
-	get_viewport().msaa_3d = Viewport.MSAA_2X
 	_size_ground()
 	session = ClientSession.new()
 	session.name = "Session"

@@ -111,6 +111,18 @@ M2A、M2B 全部合入 `chore/agent-coordination`：`tests/run_smoke.sh` 7/7、`
 - `--free-build` 冻结国库（沙盒），若需要"免费但有收入"要给 `SimEconomy.tick` 加旗标。
 - 服务器端 `hello_timeout`、`server_full` 两条路径没有自动化测试。
 
+## M4 画面接入（2026-10-08 04:45 合入）
+
+showcase 的程序化街区按 8×8 块接到 `WorldView.rebuild_block` 的数据路径上（`client/assets/techart/live/**`、`client/view/**`）。1080p 交互档（MetalFX Temporal 0.67×、SSAO 中档、4096 阴影、无 GI/SSIL/SSR）：空城与小城帧时 9–10 ms，9 个满块 576 栋 10 ms；单格变化重建 4 ms，一条新路 7 ms，256 块全量 50 ms；显存 440–485 MB。预算 ≤ 33 ms / ≤ 8 ms / ≤ 2 s / ≤ 1.5 GB 全部满足。`view_check` 带性能断言。
+
+M4 打磨项：
+- 冷订阅卡顿：相机进入未见过的满块一次性 65–77 ms（9 块 669 ms），要把冷建分帧。
+- 近景缩放下限从 16 格改为 3 格（90 m），是刻意的玩法变化，待负责人确认。
+- `client/main.tscn` 的 Ground 平面只是 `visible=false`，`presentation.gd` 仍引用 `$Ground`，可一并删除。
+- 黄昏预设未做；SDFGI 未测（`LiveLighting.GI_MODE` 可切）。
+- 远景未订阅块仍是半透明浅色方块；树和车没有按距离裁减。
+- 电站本体仍画不出（等 `has_power_plant` 字段）。
+
 ## 不在 M2
 
 技术人员的产生与迁移、军事、轮回继承、大厅与阵营选择、程序化建筑接入（M4）。

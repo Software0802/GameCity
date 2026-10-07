@@ -1,0 +1,41 @@
+# Build a small city on a real dedicated server for the M4 screenshot evidence (faction A,
+# the first player to join). Zones inside A's spawn, two streets, a plant, three claims east
+# of the spawn, then idle so the sim grows the lots. Ortho sizes are metres (30 m per tile).
+# Pointer input needs the project's 1280x720 window (synthetic events are in viewport space).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp> --status-file <tmp>/status.json
+#   godot --path . -- --join 127.0.0.1 --port 24690 --name LiveA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/live_build.txt --screenshot /tmp/gamecity_live_server.png \
+#     --screenshot-frames 600 --view-perf
+wait 150
+focus 6 5
+zoom 480
+wait 10
+tool zone_r
+drag 1 1 3 1
+drag 1 2 3 2
+tool zone_c
+drag 5 1 6 1
+click 5 2
+tool zone_i
+click 1 6
+click 2 6
+wait 5
+tool road
+drag 0 3 7 3
+drag 4 0 4 7
+drag 7 0 7 7
+wait 5
+tool power
+click 4 5
+wait 5
+tool claim
+click 8 3
+click 9 3
+click 8 4
+wait 5
+tool zone_r
+drag 8 3 9 3
+wait 5
+rclick
+hover 5 1
+wait 240

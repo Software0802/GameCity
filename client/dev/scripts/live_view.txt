@@ -1,0 +1,9 @@
+# Camera-only view of a live server (no pointer input, so it works at any --resolution):
+# frame-time probe for the hand-back perf table. Waits for WELCOME, frames A's spawn.
+#   godot --path . --resolution 1920x1080 --disable-vsync -- --join 127.0.0.1 --port 24690 --name LiveA \
+#     --identity <tmp>/identity.cfg --input-script client/dev/scripts/live_view.txt \
+#     --screenshot /tmp/gamecity_live_view.png --screenshot-frames 300 --view-perf
+wait 150
+focus 6 5
+zoom 480
+wait 200

@@ -1,0 +1,9 @@
+# Near shot of the stub city for the M4 screenshot evidence: camera only (no pointer input, so
+# it works at any --resolution). Frames A's commercial corner (5..7, 1..2) with the plant and
+# the brownout lot at 3,3 in view; ortho size 150 m (five tiles tall).
+#   godot --path . --resolution 1920x1080 -- --stub --input-script client/dev/scripts/live_near.txt \
+#     --screenshot /tmp/gamecity_near.png --screenshot-frames 200 --view-perf
+wait 20
+focus 5 3
+zoom 150
+wait 60

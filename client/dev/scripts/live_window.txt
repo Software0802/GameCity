@@ -1,0 +1,9 @@
+# Facade window-state close-up on the stub city (camera only, any --resolution): the brownout
+# R lot 3,3 (dark windows, half of them flashing with the flicker) next to the powered R lots
+# 2,3 / 2,2 / 3,2. Ortho size 60 m (two tiles tall).
+#   godot --path . --resolution 1920x1080 -- --stub --input-script client/dev/scripts/live_window.txt \
+#     --screenshot /tmp/gamecity_window.png --screenshot-frames 200
+wait 20
+focus 3 3
+zoom 60
+wait 60
