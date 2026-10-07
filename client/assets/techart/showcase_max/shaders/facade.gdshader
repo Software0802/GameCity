@@ -34,7 +34,8 @@ uniform vec3 glass_col : source_color = vec3(0.05, 0.075, 0.1);
 uniform float glass_metal = 0.0;
 uniform float glass_rough = 0.05;
 uniform float night = 0.0;
-uniform float emit_gain = 1.6;
+uniform bool use_clearcoat = true;
+uniform float emit_gain = 0.85;
 uniform float interior_day = 0.14;
 uniform float room_depth = 4.2;
 uniform float dirt_amount = 0.5;
@@ -98,7 +99,7 @@ vec3 interior(vec2 pc, vec3 vt, float bw, float fh, float rid, float lit, vec3 l
 	float d2 = dot(to_l, to_l);
 	float ndl = clamp(dot(nrm, normalize(to_l)) * 0.7 + 0.3, 0.1, 1.0);
 	float lamp_i = ndl / (1.0 + 0.10 * d2);
-	vec3 lit_col = col * lamp_col * lamp_i * 3.2;
+	vec3 lit_col = col * lamp_col * lamp_i * 1.7;
 	vec3 day_col = col * interior_day * (0.6 + 0.4 * (1.0 - t / (room_depth + 2.0)));
 	return mix(day_col, lit_col, lit * night_k);
 }
@@ -249,6 +250,17 @@ void fragment() {
 	// ---- opening AO on the wall
 	vec2 dq = max(abs(pc - ctr) - half_o, vec2(0.0));
 	float dist_o = length(dq);
+	// reveal bevel: tilt the wall normal toward the opening across a 7 cm band so frames catch light and shade
+	if (wh > 0.01 && style != 2) {
+		vec2 dv = pc - ctr;
+		vec2 ov = abs(dv) - half_o;
+		float inside = max(ov.x, ov.y);
+		float band = (1.0 - sc_aa_step(0.0, inside, px)) * 0.0;
+		float bevel = smoothstep(0.075, 0.0, inside) * step(0.0, inside);
+		vec2 dirv = (ov.x > ov.y) ? vec2(sign(dv.x), 0.0) : vec2(0.0, sign(dv.y));
+		// wall tangent space x = along u, y = up (v is -h): normal-map convention y up
+		nmap.xy = mix(nmap.xy, nmap.xy - dirv * vec2(0.35, 0.35) * 0.5 + vec2(0.0), bevel);
+	}
 	float ao_open = (wh > 0.01) ? mix(0.55, 1.0, smoothstep(0.0, 0.28, dist_o)) : 1.0;
 	// sill: lighter strip just below the opening with a shadow below it
 	float sill_m = 0.0;
@@ -329,6 +341,12 @@ void fragment() {
 	ROUGHNESS = rough;
 	METALLIC = metal;
 	SPECULAR = spec;
+	// glass gets a clearcoat layer (sharp sky reflection over the interior-mapped room)
+	float gcoat = max(m_glass, m_door_glass);
+	if (use_clearcoat) {
+		CLEARCOAT = gcoat;
+		CLEARCOAT_ROUGHNESS = 0.03;
+	}
 	AO = ao;
 	AO_LIGHT_AFFECT = 0.7;
 	EMISSION = emis;

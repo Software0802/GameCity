@@ -26,6 +26,7 @@ var rng := RandomNumberGenerator.new()
 var chunk := ""
 var infos := {}      # tile id -> {center: Vector3, roof_y: float, size: Vector2, f: int, kind: String}
 var lamps_hint: Array = []
+var area_lights: Array = []   # shopfront / lobby glow for AreaLight3D: {pos, dir, size: Vector2, color, energy}
 
 func _init(data, batches: Dictionary) -> void:
 	D = data
@@ -118,7 +119,10 @@ func walls(key: String, c: Vector2, sl: float, sd: float, f: int, y0: float, y1:
 		wall(bt, a, bp, y0, y1, seed, floor_h, bay_w, lit, 1.0 if (k == 0 and door) else 0.0, parapet, door_bay, variant)
 
 ## Flat roof slab with parapet inner faces and cap. y = roof level (top of last floor).
-func flat_roof(c: Vector2, sl: float, sd: float, f: int, y: float, parapet: float, roof_key := "roof_gravel") -> void:
+func flat_roof(c: Vector2, sl: float, sd: float, f: int, y: float, parapet: float, roof_key := "auto") -> void:
+	if roof_key == "auto":
+		var rr := rng.randf()
+		roof_key = "roof_gravel" if rr < 0.5 else ("roof_membrane" if rr < 0.85 else "roof_green")
 	var fd: Vector2 = DIRV[f]
 	var r := right_of(fd)
 	var hx: Vector2 = r * (sl * 0.5)
@@ -515,6 +519,8 @@ func _c0(t: Dictionary, c0: Vector2, f: int) -> void:
 		sc.a = 1.0
 		sign_panel(pc, f, sd * 0.5, y0 + fh * GS_C1 + 0.2, bw - 0.9, 0.7, sc)
 	roof_clutter(c, sl, sd, f, top, 1.0, ["hvac", "hvac", "vent", "pent", "antenna"])
+	area_lights.append({"pos": Vector3((c + fd * (sd * 0.5 + 0.1)).x, y0 + 1.9, (c + fd * (sd * 0.5 + 0.1)).y), "dir": Vector3(fd.x, -0.15, fd.y),
+		"size": Vector2(sl * 0.8, 2.6), "color": Color(1.0, 0.82, 0.58), "energy": 5.0})
 	infos[t["id"]] = {"center": Vector3(c.x, top, c.y), "roof_y": top, "size": Vector2(sl, sd), "f": f, "kind": "C0"}
 
 func _c1(t: Dictionary, c0: Vector2, f: int) -> void:
@@ -541,6 +547,8 @@ func _c1(t: Dictionary, c0: Vector2, f: int) -> void:
 		var yaw := atan2(r.y, r.x) * -1.0
 		b("concrete").box_yaw(Vector3(pp.x, (y0 + top) * 0.5 + 1.5, pp.y), Vector3(0.1, top - y0 - 3.0, 0.36), yaw, Color(0.95, 0.95, 0.93), 0x37)
 	roof_clutter(c, sl, sd, f, top, 1.0, ["hvac", "hvac", "pent", "antenna", "dish"])
+	area_lights.append({"pos": Vector3((c + fd * (sd * 0.5 + 0.1)).x, y0 + 2.4, (c + fd * (sd * 0.5 + 0.1)).y), "dir": Vector3(fd.x, -0.2, fd.y),
+		"size": Vector2(sl * 0.75, 3.2), "color": Color(0.85, 0.92, 1.0), "energy": 5.0})
 	infos[t["id"]] = {"center": Vector3(c.x, top, c.y), "roof_y": top, "size": Vector2(sl, sd), "f": f, "kind": "C1"}
 
 func _c2(t: Dictionary, c0: Vector2, f: int) -> void:
@@ -559,6 +567,14 @@ func _c2(t: Dictionary, c0: Vector2, f: int) -> void:
 	flat_roof(c, pod_l, pod_d, f, pod_top, 0.0)
 	_terrace_rail(c, pod_l, pod_d, f, pod_top)
 	canopy(c, f, pod_d * 0.5, y0 + 3.8, 5.0, 2.2)
+	# refractive lobby glass skin, 6 cm proud of the podium front wall
+	var skin_r := right_of(fd)
+	var sk0 := c + fd * (pod_d * 0.5 + 0.06) - skin_r * (pod_l * 0.5 - 0.3)
+	var sk1 := c + fd * (pod_d * 0.5 + 0.06) + skin_r * (pod_l * 0.5 - 0.3)
+	b("glass_lobby").quad(Vector3(sk0.x, y0 + fh * 1.4 - 0.4, sk0.y), Vector3(sk1.x, y0 + fh * 1.4 - 0.4, sk1.y), Vector3(sk1.x, y0 + 0.3, sk1.y), Vector3(sk0.x, y0 + 0.3, sk0.y), Vector3(fd.x, 0, fd.y),
+		Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1))
+	area_lights.append({"pos": Vector3((c + fd * (pod_d * 0.5 + 0.1)).x, y0 + 2.8, (c + fd * (pod_d * 0.5 + 0.1)).y), "dir": Vector3(fd.x, -0.2, fd.y),
+		"size": Vector2(pod_l * 0.8, 4.0), "color": Color(0.9, 0.95, 1.0), "energy": 6.0})
 	# tower: glass curtain wall, setback
 	var tl := pod_l - rng.randf_range(3.0, 4.5)
 	var td := pod_d - rng.randf_range(3.0, 4.5)

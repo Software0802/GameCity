@@ -13,12 +13,15 @@ extends Node
 ##   CITY_SHOWCASE_WARMUP=90        warm-up frames per shot
 ##   CITY_SHOWCASE_PERF=file.json   append perf rows (60-frame averages) to this file
 ##   CITY_SHOWCASE_TAG=_x           suffix for output file names (variant comparisons)
+##   CITY_SHOWCASE_BENCH=1          run the feature ablation plan (bench_plan.gd) instead of the shots
+##   CITY_SHOWCASE_BENCH_GROUPS=a,b only these groups (gi, fx, sky, aa, shadow, lights, shots, tier)
 
 const Cfg := preload("res://client/assets/techart/showcase_max/scripts/cfg.gd")
 const Shots := preload("res://client/assets/techart/showcase_max/scripts/shots.gd")
 const Quality := preload("res://client/assets/techart/showcase_max/scripts/quality.gd")
 const Lighting := preload("res://client/assets/techart/showcase_max/scripts/lighting.gd")
 const World := preload("res://client/assets/techart/showcase_max/scripts/world.gd")
+const BenchPlan := preload("res://client/assets/techart/showcase_max/scripts/bench_plan.gd")
 
 var sv: SubViewport
 var scene3d: Node3D
@@ -28,7 +31,7 @@ var world
 var fx := {}
 var shots := {}
 var cur_shot := ""
-var warmup := 90
+var warmup := 240
 var perf_rows: Array = []
 var hud: Label
 var interactive_index := 0
@@ -52,7 +55,11 @@ func _ready() -> void:
 	Quality.apply_server(fx)
 	_make_viewport(Vector2i(int(1920 * scale), int(1080 * scale)))
 	_make_scene()
-	if capture:
+	if OS.get_environment("CITY_SHOWCASE_BENCH") == "1":
+		DisplayServer.window_set_size(Vector2i(640, 360))
+		await _run_bench()
+		get_tree().quit()
+	elif capture:
 		DisplayServer.window_set_size(Vector2i(640, 360))
 		await _capture_all(scale)
 		get_tree().quit()
@@ -85,6 +92,11 @@ func _make_scene() -> void:
 func _apply_shot(name: String) -> void:
 	cur_shot = name
 	var shot: Dictionary = shots[name]
+	# SDFGI cascades are centred on the camera, so the camera distance picks the cascade cell size;
+	# the shadow range follows the camera depth range.
+	if not fx.has("sdfgi_cell_user"):
+		fx["sdfgi_cell"] = float(shot.get("sdfgi_cell", fx.get("sdfgi_cell", 0.4)))
+	fx["shadow_max"] = float(shot.get("dist", 420.0)) + 150.0 if shot["kind"] == "game" else 900.0
 	light.configure(shot["preset"], fx, shot["kind"])
 	Shots.make_camera(shot, cam)
 	var dusk: bool = shot["preset"] == "dusk"
@@ -94,8 +106,14 @@ func _apply_shot(name: String) -> void:
 		light.set_dof(cam, true, cam.global_position.distance_to(shot["look"]), 120.0, 8.0, 0.12)
 	else:
 		light.set_dof(cam, false, 0, 0, 0, 0)
+	if fx.get("gi", "sdfgi") == "voxel":
+		var fcs: Vector3 = shot.get("voxel_center", shot.get("focus", shot.get("look", Vector3.ZERO)))
+		var ext := float(fx.get("voxel_extent", shot.get("voxel_extent", 340.0)))
+		world.setup_voxel_gi(Vector3(fcs.x, 45.0, fcs.z), Vector3(ext, 120.0, ext), int(fx.get("voxel_subdiv", 256)), light.sun)
+	else:
+		world.disable_voxel_gi()
 	if world.has_method("apply_preset"):
-		world.apply_preset(shot["preset"], shot, fx)
+		world.apply_preset(shot["preset"], shot, fx, light.tm_params)
 
 func _capture_all(scale: float) -> void:
 	var names: Array = []
@@ -123,6 +141,7 @@ func _capture_all(scale: float) -> void:
 		_apply_shot(base)
 		await _settle(warmup)
 		var perf := await _measure(60)
+		perf["draw_ms"] = await _measure_draw(60)
 		var img := sv.get_texture().get_image()
 		var path := out_dir.path_join(String(n) + OS.get_environment("CITY_SHOWCASE_TAG") + ".png")
 		var err := img.save_png(path)
@@ -134,7 +153,7 @@ func _capture_all(scale: float) -> void:
 		perf["gi"] = fx.get("gi")
 		perf_rows.append(perf)
 		print("[capture] ", n, " -> ", path, " ", img.get_width(), "x", img.get_height(), " err=", err,
-			" proc_ms=", snappedf(perf["proc_ms"], 0.01), " wall_ms=", snappedf(perf["wall_ms"], 0.01), " gpu_ms=", snappedf(perf["gpu_ms"], 0.01))
+			" proc_ms=", snappedf(perf["proc_ms"], 0.01),  " wall_ms=", snappedf(perf["wall_ms"], 0.01), " draw_ms=", snappedf(perf["draw_ms"], 0.01))
 	var perf_file := OS.get_environment("CITY_SHOWCASE_PERF")
 	if perf_file != "":
 		var f := FileAccess.open(perf_file, FileAccess.READ_WRITE if FileAccess.file_exists(perf_file) else FileAccess.WRITE)
@@ -173,6 +192,70 @@ func _measure(frames: int) -> Dictionary:
 		"vram_mb": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
 	}
 
+func _run_bench() -> void:
+	var groups := OS.get_environment("CITY_SHOWCASE_BENCH_GROUPS")
+	var only: Array = Array(groups.split(",", false)) if groups != "" else []
+	var docs_dir := ProjectSettings.globalize_path(Cfg.PACK + "/docs")
+	var cmp_dir := ProjectSettings.globalize_path(Cfg.PREVIEW_DIR + "/compare")
+	DirAccess.make_dir_recursive_absolute(cmp_dir)
+	var res_path := docs_dir + "/bench_results.json"
+	var results := {}
+	if FileAccess.file_exists(res_path):
+		var rf := FileAccess.open(res_path, FileAccess.READ)
+		var parsed = JSON.parse_string(rf.get_as_text())
+		if parsed is Dictionary:
+			results = parsed
+	var crop := Rect2i(700, 330, 640, 360)
+	for entry in BenchPlan.entries():
+		var group: String = entry[0]
+		if not only.is_empty() and not (group in only):
+			continue
+		var tag: String = entry[1]
+		var shot_name: String = entry[2]
+		var ov: Dictionary = entry[3].duplicate()
+		var base_profile := "interactive" if ov.get("profile", "") == "interactive" else "shot"
+		ov.erase("profile")
+		fx = Quality.profile(base_profile)
+		for k in ov:
+			fx[k] = ov[k]
+		Quality.apply_server(fx)
+		sv.size = Vector2i(1920, 1080)
+		Quality.apply_viewport(sv, fx)
+		_apply_shot(shot_name)
+		await _settle(110)
+		var ms := await _measure_draw(60)
+		var row := {"group": group, "tag": tag, "shot": shot_name, "draw_ms": snappedf(ms, 0.01), "profile": base_profile,
+			"fx": ov, "vram_mb": snappedf(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0, 0.1),
+			"draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
+			"prims": Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)}
+		var mode: String = entry[4]
+		if mode != "":
+			await get_tree().process_frame
+			var img := sv.get_texture().get_image()
+			if mode == "crop":
+				img = img.get_region(crop)
+			else:
+				img.resize(960, 540, Image.INTERPOLATE_LANCZOS)
+			var fp := "%s/%s_%s.png" % [cmp_dir, group, tag]
+			img.save_png(fp)
+			row["image"] = "compare/%s_%s.png" % [group, tag]
+		results["%s/%s" % [group, tag]] = row
+		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
+		var wf := FileAccess.open(res_path, FileAccess.WRITE)
+		wf.store_string(JSON.stringify(results, "\t"))
+		wf.close()
+
+## Throughput without the window's present cap: drive frames with force_draw and flush the GPU at the end.
+func _measure_draw(frames: int) -> float:
+	await get_tree().process_frame
+	RenderingServer.force_sync()
+	var t0 := Time.get_ticks_usec()
+	for i in frames:
+		RenderingServer.force_draw(false, 0.0)
+	RenderingServer.force_sync()
+	var img := sv.get_texture().get_image()   # forces the GPU queue to drain
+	return float(Time.get_ticks_usec() - t0) / 1000.0 / float(frames)
+
 # ---------------------------------------------------------------- interactive
 func _interactive_setup() -> void:
 	DisplayServer.window_set_size(Vector2i(1280, 720))
@@ -191,6 +274,10 @@ func _interactive_setup() -> void:
 	_apply_shot(Shots.ORDER[0])
 
 func _process(_dt: float) -> void:
+	if world != null and world.mats != null:
+		var ph := fmod(Time.get_ticks_msec() / 1000.0 * 0.35, 1.0)
+		for sm in world.mats.overlay_mats:
+			sm.set_shader_parameter("pulse_phase", ph)
 	if hud == null:
 		return
 	hud.text = "%s | %s | proc %.1f ms | gpu %.1f ms | keys 1-6 shots, T tier (shot/interactive)" % [

@@ -5,9 +5,9 @@ render_mode cull_disabled;
 
 #include "res://client/assets/techart/showcase_max/shaders/sc_common.gdshaderinc"
 
-uniform float leaf_cut = 0.30;
-uniform vec2 leaf_freq = vec2(30.0, 22.0);
-uniform float backlight = 0.45;
+uniform float leaf_cut = 0.24;
+uniform vec2 leaf_freq = vec2(46.0, 34.0);
+uniform float backlight = 0.18;
 varying vec4 v_col;
 varying vec3 v_wpos;
 
@@ -26,9 +26,9 @@ void fragment() {
 	if (leaf - leaf_cut - rim < 0.0) {
 		discard;
 	}
-	vec3 col = v_col.rgb * (0.7 + 0.6 * leaf);
+	vec3 col = v_col.rgb * (0.62 + 0.55 * leaf);
 	ALBEDO = col;
-	ROUGHNESS = 0.68;
-	SPECULAR = 0.25;
+	ROUGHNESS = 0.82;
+	SPECULAR = 0.12;
 	BACKLIGHT = col * backlight;
 }

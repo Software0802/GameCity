@@ -83,13 +83,13 @@ static func make(variant: int) -> ArrayMesh:
 	# cabin: glass prism slightly narrower, paint roof slab and pillars
 	_extrude_xy(glass, cabin, -hw + 0.16, hw - 0.16, Color(0.07, 0.1, 0.13))
 	paint.box(Vector3(roof_x0 + 0.02, roof_y - 0.02, -hw + 0.12), Vector3(roof_x1, roof_y + 0.045, hw - 0.12), Color.WHITE, 0x37)
-	var pil := 0.05
+	# door seams and a belt line on the flanks
+	var dark := Color(0.04, 0.04, 0.045)
 	for zz: float in [-1.0, 1.0]:
-		var zc := zz * (hw - 0.16)
-		var cb := cabin[0]
-		var cf := cabin[cabin.size() - 1]
-		paint.box(Vector3(cb.x, cb.y, zc - 0.03), Vector3(cb.x + 0.12, roof_y, zc + 0.03), Color.WHITE, 0x37)
-		paint.box(Vector3(roof_x1 - 0.04, cf.y, zc - 0.03), Vector3(roof_x1 + 0.4, roof_y - 0.01, zc + 0.03), Color.WHITE, 0x37)
+		var zf := zz * (hw + 0.004)
+		for dx: float in [roof_x0 + 0.05, (roof_x0 + roof_x1) * 0.5, roof_x1 - 0.1]:
+			trim.box(Vector3(dx - 0.012, 0.42, zf - 0.004), Vector3(dx + 0.012, 0.98, zf + 0.004), dark, 0x37)
+		trim.box(Vector3(lower[0].x + 0.1, 0.3, zf - 0.004), Vector3(lower[lower.size() - 2].x - 0.1, 0.36, zf + 0.004), dark, 0x37)
 	# bumpers and lights
 	var lo_front := lower[lower.size() - 2].x
 	var lo_rear := lower[0].x

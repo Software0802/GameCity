@@ -32,6 +32,8 @@ MATERIALS = {
     "leafy_grass": ("2k", "1k", "1k"),
     "floor_pattern_02": ("1k", "1k", "1k"),
     "gravel_embedded_concrete": ("1k", "1k", "1k"),
+    "grey_plaster": ("1k", "1k", "1k"),
+    "rectangular_facade_tiles": ("1k", "1k", "1k"),
 }
 HDRIS = {
     "kloofendal_48d_partly_cloudy_puresky": "2k",

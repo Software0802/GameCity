@@ -23,8 +23,10 @@ No map is larger than 2K. Everything else in the package (road markings, facades
 | Concrete Floor Worn 001 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/concrete_floor_worn_001 | curbs, plinths, roof slabs |
 | Brick Wall 006 | Jan Burghardt | https://polyhaven.com/a/brick_wall_006 | R facades |
 | Beige Wall 002 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/beige_wall_002 | R plaster, C spandrels |
-| Concrete Wall 003 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/concrete_wall_003 | C low-rise panels |
-| Granite Tile 03 | Charlotte Baglioni | https://polyhaven.com/a/granite_tile_03 | C ground floor cladding |
+| Concrete Wall 003 | Dimitrios Savva, Rico Cilliers | https://polyhaven.com/a/concrete_wall_003 | downloaded, tried on C walls, replaced (reads as dirty marble) |
+| Granite Tile 03 | Charlotte Baglioni | https://polyhaven.com/a/granite_tile_03 | downloaded, tried on C ground floors, replaced |
+| Grey Plaster | Rob Tuytel | https://polyhaven.com/a/grey_plaster | C ribbon and curtain-wall spandrel walls |
+| Rectangular Facade Tiles | Charlotte Baglioni | https://polyhaven.com/a/rectangular_facade_tiles | C ground floor and podium cladding |
 | Factory Wall | Rob Tuytel | https://polyhaven.com/a/factory_wall | I cladding (corrugated) |
 | Corrugated Iron 02 | Jenelle van Heerden, Sergej Majboroda | https://polyhaven.com/a/corrugated_iron_02 | I cladding, roof sheds |
 | Concrete Wall 008 | Dario Barresi, Charlotte Baglioni | https://polyhaven.com/a/concrete_wall_008 | I base walls |

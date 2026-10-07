@@ -16,6 +16,7 @@ uniform vec2 grid_origin = vec2(0.0);
 uniform float grid_alpha = 0.14;
 uniform float block_every = 8.0;
 uniform float fade_dist = 0.0;
+uniform vec3 pal[16];   // tonemap-compensated palette, set per preset by world.gd
 
 varying vec3 wpos;
 
@@ -25,7 +26,8 @@ void vertex() {
 
 void fragment() {
 	vec4 c = COLOR;
-	vec3 rgb = c.rgb * gain * (1.0 + 0.35 * night);
+	vec3 rgb = pal[int(c.r * 15.0 + 0.5)] * gain;
+	if (mode == 4) { rgb = c.rgb; }
 	float a = c.a;
 	if (mode == 1) {
 		float g = 1.0 - clamp(UV.y, 0.0, 1.0);

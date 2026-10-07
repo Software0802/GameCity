@@ -50,6 +50,8 @@ detect_3d/compress_to=0
 
 
 def write(path, src, mode, hq, hdrc, nm, mips):
+    if os.path.exists(path + ".import"):
+        return  # keep the uid/path Godot already wrote
     with open(path + ".import", "w") as f:
         f.write(TEMPLATE.format(src=src, mode=mode, hq=str(hq).lower(), hdrc=hdrc, nm=nm, mips=str(mips).lower()))
     print("import:", os.path.basename(path))

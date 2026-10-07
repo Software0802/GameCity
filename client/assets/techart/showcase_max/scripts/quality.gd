@@ -13,18 +13,18 @@ static func profile(name: String) -> Dictionary:
 				"tonemap": "aces", "auto_exposure": false,
 				"aa": "metalfx_t", "scale": 0.67,
 				"shadow_atlas": 4096, "shadow_mode": "pssm2", "soft_shadow": "medium",
-				"sky": "panorama", "omni_budget": 12, "area_lights": false,
+				"sky": "pano_clamped", "omni_budget": 12, "area_lights": false,
 			}
 		_:
 			return {
 				"profile": "shot",
-				"gi": "sdfgi", "sdfgi_cascades": 4, "sdfgi_cell": 0.4,
+				"gi": "voxel", "voxel_subdiv": 512, "sdfgi_cascades": 4, "sdfgi_cell": 0.4,
 				"ssao": true, "ssil": true, "ssr": true,
 				"fog": true, "vfog": true, "glow": true,
 				"tonemap": "aces", "auto_exposure": false,
 				"aa": "msaa4_taa", "scale": 1.0,
 				"shadow_atlas": 8192, "shadow_mode": "pssm4", "soft_shadow": "ultra",
-				"sky": "panorama", "omni_budget": 24, "area_lights": true,
+				"sky": "pano_clamped", "omni_budget": 24, "area_lights": true,
 			}
 
 static func parse_overrides(s: String, into: Dictionary) -> void:

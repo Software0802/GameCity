@@ -26,17 +26,37 @@ func b(key: String) -> RefCounted:
 		B[key] = MB.new()
 	return B[key]
 
+## Palette slots. Vertex colour r = slot / 15, a = alpha. The overlay shader looks the slot up in a per-preset
+## table of tonemap-compensated colours (see tonemap_model.gd), so the final image shows the palette hex values.
+const PAL_A := 0
+const PAL_A_DIM := 1
+const PAL_B := 2
+const PAL_B_DIM := 3
+const PAL_R := 4
+const PAL_C := 5
+const PAL_I := 6
+const PAL_POWER := 7
+const PAL_CONG := 8
+
+## Target colours (brief: art-visual-source.md). Index = slot.
+static func palette() -> Array:
+	return [Cfg.COL_FACTION_A, Color("1AAF7C"), Cfg.COL_FACTION_B, Color("C93A55"),
+		Cfg.COL_ZONE_R, Cfg.COL_ZONE_C, Cfg.COL_ZONE_I, Cfg.COL_POWER, Cfg.COL_CONGESTION]
+
+static func pal(slot: int, a := 1.0) -> Color:
+	return Color(float(slot) / 15.0, 0.0, 0.0, a)
+
 static func faction_col(o: int) -> Color:
-	return Cfg.COL_FACTION_A if o == SC.Owner.FACTION_A else Cfg.COL_FACTION_B
+	return pal(PAL_A if o == SC.Owner.FACTION_A else PAL_B)
 
 static func faction_dim(o: int) -> Color:
-	return Color("1AAF7C") if o == SC.Owner.FACTION_A else Color("C93A55")
+	return pal(PAL_A_DIM if o == SC.Owner.FACTION_A else PAL_B_DIM)
 
 static func zone_col(z: int) -> Color:
 	match z:
-		SC.Zone.R: return Cfg.COL_ZONE_R
-		SC.Zone.C: return Cfg.COL_ZONE_C
-		SC.Zone.I: return Cfg.COL_ZONE_I
+		SC.Zone.R: return pal(PAL_R)
+		SC.Zone.C: return pal(PAL_C)
+		SC.Zone.I: return pal(PAL_I)
 	return Color(0, 0, 0, 0)
 
 func build() -> void:
@@ -65,8 +85,17 @@ func _lots() -> void:
 			var z1 := o.z + P - H
 			if t["zone"] != SC.Zone.NONE:
 				var zc := zone_col(t["zone"])
-				zc.a = 0.34
+				zc.a = 0.30
 				_flat_rect(plate, x0, z0, x1, z1, CH + 0.05, zc)
+				# zone frame: a solid band around the lot edge so the land-use colour survives roofs and trees
+				var fr := zone_col(t["zone"])
+				fr.a = 0.92
+				var fw := 0.9
+				var zf := b("ov_zone_frame")
+				_flat_rect(zf, x0, z0, x1, z0 + fw, CH + 0.07, fr)
+				_flat_rect(zf, x0, z1 - fw, x1, z1, CH + 0.07, fr)
+				_flat_rect(zf, x0, z0 + fw, x0 + fw, z1 - fw, CH + 0.07, fr)
+				_flat_rect(zf, x1 - fw, z0 + fw, x1, z1 - fw, CH + 0.07, fr)
 			# faction corner brackets
 			var fc := faction_col(t["owner"])
 			fc.a = 1.0
@@ -120,7 +149,7 @@ func _territory() -> void:
 					Vector3((p1 + nrm * hw).x, 0.22, (p1 + nrm * hw).y), Vector3((p0 + nrm * hw).x, 0.22, (p0 + nrm * hw).y), Vector3.UP,
 					Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1), s)
 				var cc := col
-				cc.a = 0.6
+				cc.a = 0.42
 				var L := p0.distance_to(p1)
 				wall.quad(Vector3(p0.x, 0.22 + wh, p0.y), Vector3(p1.x, 0.22 + wh, p1.y), Vector3(p1.x, 0.22, p1.y), Vector3(p0.x, 0.22, p0.y), Vector3(nrm.x, 0, nrm.y),
 					Vector2(0, 1), Vector2(L, 1), Vector2(L, 0), Vector2(0, 0), cc)
@@ -128,13 +157,13 @@ func _territory() -> void:
 func _power() -> void:
 	var fill := b("ov_power")
 	var ring := b("ov_ring")
-	var pc := Cfg.COL_POWER
+	var pc := pal(PAL_POWER)
 	for t in D.tiles:
 		if not t["power_covered"]:
 			continue
 		var o: Vector3 = Cfg.corner(t["x"], t["z"])
 		var c := pc
-		c.a = 0.10
+		c.a = 0.034
 		_flat_rect(fill, o.x + 0.8, o.z + 0.8, o.x + P - 0.8, o.z + P - 0.8, 0.26, c)
 	var rr := float(SC.POWER_RADIUS_SUGGESTED) * P
 	for pl in D.plants:
@@ -168,10 +197,10 @@ func _congestion() -> void:
 		var c1: Vector3 = Cfg.corner(line, along + 1) if vertical else Cfg.corner(along + 1, line)
 		# strips just inside both curbs, covering the segment plus both junction squares
 		for side: float in [-1.0, 1.0]:
-			var col := Cfg.COL_CONGESTION
+			var col := pal(PAL_CONG)
 			col.a = clampf(cong, 0.3, 1.0)
-			var off: float = side * (C - 0.55)
-			var wdt := 0.55
+			var off: float = side * (C - 0.75)
+			var wdt := 1.3
 			var L := c0.distance_to(c1)
 			if vertical:
 				var x := c0.x + off
@@ -182,8 +211,8 @@ func _congestion() -> void:
 				pulse.quad(Vector3(c0.x, 0.06, z - wdt * 0.5), Vector3(c1.x, 0.06, z - wdt * 0.5), Vector3(c1.x, 0.06, z + wdt * 0.5), Vector3(c0.x, 0.06, z + wdt * 0.5), Vector3.UP,
 					Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1), col)
 		# soft glow across the carriageway
-		var glow := Cfg.COL_CONGESTION
-		glow.a = 0.20 * cong
+		var glow := pal(PAL_CONG)
+		glow.a = 0.10 * cong
 		if vertical:
 			var x2 := c0.x
 			pulse.quad(Vector3(x2 - C, 0.05, c0.z), Vector3(x2 + C, 0.05, c0.z), Vector3(x2 + C, 0.05, c1.z), Vector3(x2 - C, 0.05, c1.z), Vector3.UP,

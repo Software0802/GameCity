@@ -15,6 +15,7 @@ var sky: Sky
 var preset := "day"
 var sun_dir_hdri := {}      # preset -> Vector3 unit vector (direction TO the sun) in HDRI space
 var _sky_cache := {}
+var tm_params := [1.0, 6.0, 1.1, 1.0]   # exposure, white, contrast, saturation of the active preset
 
 func make(parent: Node3D) -> void:
 	env = Environment.new()
@@ -71,21 +72,23 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 	var az := deg_to_rad(az_deg)
 	var to_sun := Vector3(sin(az) * cos(elev), sin(elev), -cos(az) * cos(elev))
 	sun.look_at_from_position(Vector3.ZERO, -to_sun, Vector3.UP)
+	print("[lighting] ", p, " sun travels along ", -sun.global_transform.basis.z, " (to_sun ", to_sun, ") az=", az_deg, " elev=", rad_to_deg(elev))
 	# sky rotation about Y so the HDRI sun direction maps to to_sun
 	var hdri_az := atan2(sd.x, -sd.z)
 	var sky_yaw := az - hdri_az
 	# ---- sky
-	var sky_mode: String = fx.get("sky", "panorama")
+	var sky_mode: String = fx.get("sky", "pano_clamped")
 	sky = Sky.new()
 	sky.radiance_size = Sky.RADIANCE_SIZE_512
 	sky.process_mode = Sky.PROCESS_MODE_QUALITY
 	if sky_mode == "panorama":
+		# stock PanoramaSkyMaterial: raw HDRI, sun disc included (double-lights rough surfaces, see REPORT)
 		var pm := PanoramaSkyMaterial.new()
 		pm.panorama = load(hdri)
-		pm.energy_multiplier = 1.0 if day else 1.0
+		pm.energy_multiplier = 1.0
 		sky.sky_material = pm
 		env.sky_rotation = Vector3(0, sky_yaw, 0)
-	else:
+	elif sky_mode == "physical":
 		var ps := PhysicalSkyMaterial.new()
 		ps.rayleigh_coefficient = 2.0 if day else 3.2
 		ps.rayleigh_color = Color(0.30, 0.52, 0.95) if day else Color(0.55, 0.38, 0.52)
@@ -98,16 +101,27 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 		ps.energy_multiplier = 1.0
 		sky.sky_material = ps
 		env.sky_rotation = Vector3.ZERO
+	else:
+		# default: Poly Haven HDRI through a clamping sky shader (radiance clamp keeps the sun a single light)
+		var sm := ShaderMaterial.new()
+		sm.shader = load(Cfg.PACK + "/shaders/sky_panorama.gdshader")
+		sm.set_shader_parameter("hdri", load(hdri))
+		sm.set_shader_parameter("energy", float(fx.get("sky_energy", 1.0)))
+		sm.set_shader_parameter("radiance_energy", float(fx.get("sky_radiance", 1.0 if day else 0.5)))
+		sm.set_shader_parameter("max_lum_radiance", float(fx.get("sky_clamp", 3.0 if day else 2.4)))
+		sm.set_shader_parameter("max_lum_view", float(fx.get("sky_view_clamp", 40.0)))
+		sky.sky_material = sm
+		env.sky_rotation = Vector3(0, sky_yaw, 0)
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.background_energy_multiplier = 1.0
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_sky_contribution = 1.0
-	env.ambient_light_energy = float(fx.get("ambient_energy", 0.6 if day else 0.55))
+	env.ambient_light_energy = float(fx.get("ambient_energy", 0.6 if day else 0.3))
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# ---- sun
 	sun.light_color = Color(1.0, 0.94, 0.84) if day else Color(1.0, 0.58, 0.30)
-	sun.light_energy = float(fx.get("sun_energy", 3.1 if day else 2.4))
+	sun.light_energy = float(fx.get("sun_energy", 3.1 if day else 2.0))
 	sun.light_specular = 1.0
 	sun.light_angular_distance = 0.4 if day else 0.9   # soft penumbra
 	sun.shadow_enabled = bool(fx.get("shadows", true))
@@ -138,7 +152,7 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 		"filmic": env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 		"reinhard": env.tonemap_mode = Environment.TONE_MAPPER_REINHARDT
 		_: env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	env.tonemap_exposure = float(fx.get("exposure", 1.0 if day else 1.15))
+	env.tonemap_exposure = float(fx.get("exposure", 1.0 if day else 0.95))
 	env.tonemap_white = 6.0
 	# ---- screen-space effects
 	env.ssao_enabled = bool(fx.get("ssao", true))
@@ -183,7 +197,7 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 	env.fog_sun_scatter = 0.25 if day else 0.55
 	env.fog_sky_affect = 0.0
 	env.volumetric_fog_enabled = bool(fx.get("vfog", true)) and cine
-	env.volumetric_fog_density = float(fx.get("vfog_density", 0.0009 if day else 0.0024))
+	env.volumetric_fog_density = float(fx.get("vfog_density", 0.0009 if day else 0.0013))
 	env.volumetric_fog_albedo = Color(0.9, 0.93, 1.0) if day else Color(1.0, 0.78, 0.62)
 	env.volumetric_fog_emission = Color(0, 0, 0)
 	env.volumetric_fog_anisotropy = 0.62
@@ -213,6 +227,9 @@ func configure(p: String, fx: Dictionary, kind := "game") -> void:
 	attrs.auto_exposure_min_sensitivity = 40.0
 	attrs.auto_exposure_max_sensitivity = 1600.0
 	we.camera_attributes = attrs
+	tm_params = [env.tonemap_exposure, env.tonemap_white, env.adjustment_contrast, env.adjustment_saturation]
+	if OS.get_environment("CITY_SHOWCASE_DEBUG") == "1":
+		print("[lighting] ambient_energy=", env.ambient_light_energy, " source=", env.ambient_light_source, " sun_energy=", sun.light_energy, " sdfgi=", env.sdfgi_enabled, " tonemap=", env.tonemap_mode, " exposure=", env.tonemap_exposure, " bg_energy=", env.background_energy_multiplier)
 
 func set_dof(cam: Camera3D, on: bool, focus_dist: float, far_transition: float, near_transition: float, amount: float) -> void:
 	var a := CameraAttributesPractical.new()
