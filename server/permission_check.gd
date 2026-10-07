@@ -124,11 +124,18 @@ func _check_power_tick_interest(errors: Array[String]) -> void:
 	world.apply(faction_a, GameCommand.set_zone(0, 0, SliceConstants.Zone.R))
 	world.apply(faction_a, GameCommand.set_zone(1, 0, SliceConstants.Zone.C))
 	world.apply(faction_a, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)))
+	# M2B: congestion follows building tiers. At pace 0.01 the served R tile reaches
+	# tier 1 on the second tick, loading its edge to 1/10, one 1/8 step.
+	world.apply(faction_a, GameCommand.place_power(0, 0))
+	world.pace = 0.01
 	var ticked: Array = world.sim_tick(1)
-	var congestion: ServerEvent = _first_kind(ticked, ServerEvent.Kind.CONGESTION_ALERT)
-	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, WorldStateScript.CONGESTION_WHEN_ZONED), "tick congestion")
 	_expect(errors, _first_kind(ticked, ServerEvent.Kind.SCORE_TICK) != null, "tick score")
-	var crisis_events: Array = world.sim_tick(WorldStateScript.CRISIS_TICK)
+	ticked = world.sim_tick(2)
+	var congestion: ServerEvent = _first_kind(ticked, ServerEvent.Kind.CONGESTION_ALERT)
+	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, 0.125), "tick congestion")
+	# The crisis is scheduled by server-core through set_crisis(); the next tick announces it.
+	world.set_crisis(true)
+	var crisis_events: Array = world.sim_tick(3)
 	var crisis: ServerEvent = _first_kind(crisis_events, ServerEvent.Kind.CRISIS_EVENT)
 	_expect(errors, crisis != null and crisis.crisis_event.active and world.crisis_active, "shared crisis")
 

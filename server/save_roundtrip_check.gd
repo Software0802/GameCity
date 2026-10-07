@@ -64,9 +64,11 @@ func _check_populated_roundtrip(errors: Array[String]) -> void:
 	poked.brownout = true
 	poked.building_tier = 2
 
-	# Ticks write power_covered / congestion, then the crisis latch.
+	# Ticks write power_covered / congestion / satisfaction, start the tier timers,
+	# and move the treasuries; set_crisis(true) stands in for server-core's scheduler.
 	world.sim_tick(1)
-	var crisis_events: Array = world.sim_tick(WorldStateScript.CRISIS_TICK)
+	world.set_crisis(true)
+	var crisis_events: Array = world.sim_tick(2)
 	_expect(errors, _has_kind(crisis_events, ServerEvent.Kind.CRISIS_EVENT), "crisis fired before save")
 	_expect(errors, world.crisis_active and world._crisis_sent, "crisis flags set before save")
 	_expect(errors, world.tile_at(0, 4).power_covered, "power covered before save")
@@ -86,16 +88,18 @@ func _check_populated_roundtrip(errors: Array[String]) -> void:
 
 	_compare_worlds(errors, world, restored, "populated")
 
+	# Saving the restored world reproduces the same JSON text (before any further
+	# tick: a tick moves treasuries and tier timers).
+	var again := JSON.stringify(restored.to_save_dict())
+	_expect(errors, again == text, "second save text equals first")
+
 	# The latch survives: a restored world does not fire the crisis again.
-	var after: Array = restored.sim_tick(WorldStateScript.CRISIS_TICK + 1)
+	var after: Array = restored.sim_tick(3)
 	_expect(errors, not _has_kind(after, ServerEvent.Kind.CRISIS_EVENT), "restored world does not refire crisis")
 	# And the restored world keeps simulating from the same state.
 	var score: ServerEvent = _first_kind(after, ServerEvent.Kind.SCORE_TICK)
 	_expect(errors, score != null and score.score_tick.factions.size() == 2, "restored world scores")
-
-	# Saving the restored world reproduces the same JSON text.
-	var again := JSON.stringify(restored.to_save_dict())
-	_expect(errors, again == text, "second save text equals first")
+	_expect(errors, restored.tier_timer(0, 0) > world.tier_timer(0, 0), "restored tier timer keeps counting")
 
 
 func _check_fresh_world_roundtrip(errors: Array[String]) -> void:
@@ -123,9 +127,14 @@ func _check_map_size_guard(errors: Array[String]) -> void:
 
 
 func _check_save_shape(errors: Array[String], world, save: Dictionary) -> void:
-	for key in ["map_size", "tiles", "edges", "power_sources", "crisis_active", "crisis_sent"]:
+	for key in ["map_size", "tiles", "edges", "power_sources", "crisis_active", "crisis_sent", "crisis_pending", "crisis_ends_at_unix", "pace", "factions", "tier_timers"]:
 		_expect(errors, save.has(key), "save has key %s" % key)
 	_expect(errors, save.get("map_size") == SliceConstants.MAP_SIZE, "save map_size")
+	# sim-economy fields: both treasuries moved (claims, edges, plants, upkeep), the
+	# served R tile at (0,0) has a running tier timer.
+	_expect(errors, save["factions"].size() == SliceConstants.FACTION_COUNT and save["factions"][0]["treasury"] < SliceConstants.START_TREASURY and save["factions"][1]["treasury"] < SliceConstants.START_TREASURY, "save stores faction treasuries")
+	_expect(errors, save["tier_timers"].size() >= 1 and int(save["tier_timers"][0][0]) == SliceConstants.tile_id(0, 0) and float(save["tier_timers"][0][1]) > 0.0, "save stores the running tier timer")
+	_expect(errors, save["crisis_ends_at_unix"] > 0 and is_equal_approx(save["pace"], world.pace), "save stores crisis end and pace")
 	# Only non-default tiles are stored. Count them independently, field by field.
 	var non_default := 0
 	for y in SliceConstants.MAP_SIZE:
@@ -168,14 +177,17 @@ func _compare_worlds(errors: Array[String], original, restored, label: String) -
 	for key in got_edges:
 		if not want_edges.has(key):
 			errors.append("%s edge %s appeared after restore" % [label, key])
-	var want_sources: Array = original._power_sources.keys()
-	var got_sources: Array = restored._power_sources.keys()
-	want_sources.sort()
-	got_sources.sort()
+	var want_sources: Array = original.to_save_dict()["power_sources"]
+	var got_sources: Array = restored.to_save_dict()["power_sources"]
 	if not _values_equal(want_sources, got_sources, true):
 		errors.append("%s power sources %s != %s" % [label, want_sources, got_sources])
 	_expect(errors, original.crisis_active == restored.crisis_active, "%s crisis_active restored" % label)
 	_expect(errors, original._crisis_sent == restored._crisis_sent, "%s crisis_sent restored" % label)
+	_expect(errors, original.crisis_ends_at_unix == restored.crisis_ends_at_unix and is_equal_approx(original.pace, restored.pace), "%s crisis end and pace restored" % label)
+	for faction in SliceConstants.FACTION_COUNT:
+		_expect(errors, is_equal_approx(original.treasury(faction), restored.treasury(faction)) and is_equal_approx(original.tax_rate(faction), restored.tax_rate(faction)), "%s faction %d treasury and tax restored" % [label, faction])
+		_expect(errors, original.population(faction) == restored.population(faction) and original.jobs(faction) == restored.jobs(faction), "%s faction %d counters rebuilt" % [label, faction])
+	_expect(errors, is_equal_approx(original.tier_timer(0, 0), restored.tier_timer(0, 0)), "%s tier timer restored" % label)
 	_expect(errors, _values_equal(original.to_save_dict(), restored.to_save_dict(), true), "%s to_save_dict identical after restore" % label)
 
 

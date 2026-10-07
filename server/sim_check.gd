@@ -1,0 +1,666 @@
+extends SceneTree
+
+## Headless check of the M2B simulation rules in server/world_state.gd and server/sim/.
+##   godot --headless --path . -s res://server/sim_check.gd
+## Every scenario builds its own WorldState at pace 0.01 (one tick = 100 sim seconds,
+## so a tier step takes two ticks) unless it says otherwise. Prints SIM_OK plus one
+## SIM_PERF line and exits 0, or prints each failure and exits 1.
+
+const WorldStateScript = preload("res://server/world_state.gd")
+const GrowthModelScript = preload("res://server/sim/growth_model.gd")
+
+const TEST_PACE := 0.01
+const A := SliceConstants.Owner.FACTION_A
+const B := SliceConstants.Owner.FACTION_B
+const PERF_TICKS := 100
+const PERF_SIDE := 64
+
+var _perf_line := ""
+
+
+func _initialize() -> void:
+	var errors: Array[String] = []
+	_check_funds(errors)
+	_check_free_build(errors)
+	_check_tier_up(errors)
+	_check_tier_two(errors)
+	_check_no_road(errors)
+	_check_no_power(errors)
+	_check_brownout(errors)
+	_check_pollution_cross_owner(errors)
+	_check_crisis(errors)
+	_check_tax_rate(errors)
+	_check_save_roundtrip_timer(errors)
+	_check_income(errors)
+	_check_event_quantization(errors)
+	_check_zone_change(errors)
+	_check_perf(errors)
+	if errors.is_empty():
+		print("SIM_OK")
+		print(_perf_line)
+		quit(0)
+	else:
+		for err in errors:
+			print("SIM_FAIL %s" % err)
+		print(_perf_line)
+		quit(1)
+
+
+# --- Scenarios -----------------------------------------------------------------
+
+
+## Claims along y = 0 until the treasury runs dry: the reject is INSUFFICIENT_FUNDS,
+## the tile stays neutral, nothing else moves. Then edges and plants at low funds.
+func _check_funds(errors: Array[String]) -> void:
+	var world = _world()
+	_expect(errors, is_equal_approx(world.treasury(A), float(SliceConstants.START_TREASURY)), "start treasury")
+	var first_cost: float = world.claim_cost(A)
+	var expected_first := float(SliceConstants.COST_CLAIM_BASE) * (1.0 + float(WorldStateScript.SPAWN_SIZE * WorldStateScript.SPAWN_SIZE) * SliceConstants.COST_CLAIM_GROWTH)
+	_expect(errors, is_equal_approx(first_cost, expected_first), "first claim cost %s (got %s)" % [expected_first, first_cost])
+	var claims := 0
+	var spent := 0.0
+	var x := WorldStateScript.SPAWN_SIZE
+	var rejected: Dictionary = {}
+	while x < SliceConstants.MAP_SIZE:
+		var cost: float = world.claim_cost(A)
+		var before: float = world.treasury(A)
+		var owned_before: int = world.owned_count(A)
+		var result: Dictionary = world.apply(A, GameCommand.claim_tile(x, 0))
+		if result["reason"] == ReasonCode.Id.OK:
+			claims += 1
+			spent += cost
+			_expect(errors, is_equal_approx(world.treasury(A), before - cost), "claim %d deducts %s" % [claims, cost])
+			x += 1
+			continue
+		rejected = result
+		_expect(errors, result["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS, "claim reject is INSUFFICIENT_FUNDS (got %d)" % result["reason"])
+		_expect(errors, result["events"].is_empty(), "funds reject has no events")
+		_expect(errors, world.tile_at(x, 0).owner == SliceConstants.Owner.NEUTRAL, "rejected tile stays neutral")
+		_expect(errors, is_equal_approx(world.treasury(A), before), "rejected claim keeps treasury")
+		_expect(errors, world.owned_count(A) == owned_before, "rejected claim keeps owned count")
+		break
+	_expect(errors, not rejected.is_empty(), "treasury eventually runs out")
+	_expect(errors, claims > 0 and world.treasury(A) < world.claim_cost(A), "claims stop exactly when the next one is unaffordable")
+	_perf_note("start treasury %d buys %d claims from the spawn (%.0f spent, %.1f left)" % [SliceConstants.START_TREASURY, claims, spent, world.treasury(A)])
+
+	# A plant costs COST_POWER; after the claims the treasury is below that.
+	var plant: Dictionary = world.apply(A, GameCommand.place_power(0, 0))
+	_expect(errors, plant["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS and not world.has_power_source(0, 0), "plant rejected when poor")
+	# Edges cost COST_EDGE; spend them down and confirm the first unaffordable one.
+	var left: float = world.treasury(A)
+	var edge_y := 0
+	while left >= float(SliceConstants.COST_EDGE) and edge_y < WorldStateScript.SPAWN_SIZE - 1:
+		var ok: Dictionary = world.apply(A, GameCommand.add_edge(Vector2i(0, edge_y), Vector2i(0, edge_y + 1)))
+		_expect(errors, ok["reason"] == ReasonCode.Id.OK, "edge affordable at %s" % left)
+		left = world.treasury(A)
+		edge_y += 1
+	if left < float(SliceConstants.COST_EDGE):
+		var edge: Dictionary = world.apply(A, GameCommand.add_edge(Vector2i(1, 0), Vector2i(2, 0)))
+		_expect(errors, edge["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS and world.find_edge(Vector2i(1, 0), Vector2i(2, 0)) == null, "edge rejected when poor")
+		_expect(errors, is_equal_approx(world.treasury(A), left), "rejected edge keeps treasury")
+	# Zoning, demolition, and removal stay free.
+	var zone: Dictionary = world.apply(A, GameCommand.set_zone(1, 1, SliceConstants.Zone.R))
+	_expect(errors, zone["reason"] == ReasonCode.Id.OK and is_equal_approx(world.treasury(A), left), "zone is free")
+	var demolish: Dictionary = world.apply(A, GameCommand.demolish_own(1, 1))
+	_expect(errors, demolish["reason"] == ReasonCode.Id.OK and is_equal_approx(world.treasury(A), left), "demolish is free")
+	# Eligibility comes before money: a poor faction still gets the rule reject.
+	var spawn_b: Vector2i = WorldStateScript.SPAWN_B
+	var steal: Dictionary = world.apply(A, GameCommand.claim_tile(spawn_b.x, spawn_b.y))
+	_expect(errors, steal["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE, "eligibility checked before funds")
+	# The other faction is untouched.
+	_expect(errors, is_equal_approx(world.treasury(B), float(SliceConstants.START_TREASURY)), "faction B treasury untouched")
+
+
+func _check_free_build(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	_apply_ok(errors, world, A, GameCommand.claim_tile(8, 0), "free claim")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "free edge")
+	_apply_ok(errors, world, A, GameCommand.place_power(2, 2), "free plant")
+	_expect(errors, is_equal_approx(world.treasury(A), float(SliceConstants.START_TREASURY)), "free_build spends nothing")
+	world.free_build = false
+	var cost: float = world.claim_cost(A)
+	_apply_ok(errors, world, A, GameCommand.claim_tile(9, 0), "paid claim after free_build")
+	_expect(errors, is_equal_approx(world.treasury(A), float(SliceConstants.START_TREASURY) - cost), "charging resumes when free_build is off")
+
+
+## R with road, power, and positive R demand (one C tile) rises to tier 1 on the
+## second tick at pace 0.01: 2 × 100 sim seconds ≥ TIER_UP_SECONDS.
+func _check_tier_up(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	_expect(errors, world.population(A) == SliceConstants.TIER_POP[0] and world.jobs(A) == SliceConstants.TIER_JOBS[0], "tier 0 counters")
+	var states: Array = world.faction_states()
+	_expect(errors, states[A].demand_r > 0.0, "R demand positive with one C tile (got %s)" % states[A].demand_r)
+
+	var tick1: Array = world.sim_tick(1)
+	_expect(errors, world.tile_at(0, 0).building_tier == 0, "no tier after one tick")
+	_expect(errors, is_equal_approx(world.satisfaction_raw(0, 0), 1.0 - SliceConstants.TAX_RATE_DEFAULT), "served R satisfaction is the tax penalty (got %s)" % world.satisfaction_raw(0, 0))
+	_expect(errors, is_equal_approx(world.tile_at(0, 0).satisfaction, 0.875), "satisfaction quantized to 7/8 (got %s)" % world.tile_at(0, 0).satisfaction)
+	_expect(errors, is_equal_approx(world.tier_timer(0, 0), SliceConstants.SIM_TICK_SEC / TEST_PACE), "timer holds one tick of sim seconds (got %s)" % world.tier_timer(0, 0))
+	var delta1: ServerEvent = _tile_delta_for(tick1, 0, 0)
+	_expect(errors, delta1 != null and is_equal_approx(delta1.tile_delta.satisfaction, 0.875), "tick 1 sends the satisfaction step")
+
+	var tick2: Array = world.sim_tick(2)
+	_expect(errors, world.tile_at(0, 0).building_tier == 1, "served R reaches tier 1 on tick 2")
+	var delta2: ServerEvent = _tile_delta_for(tick2, 0, 0)
+	_expect(errors, delta2 != null and delta2.tile_delta.building_tier == 1, "tier change sends a TileDelta")
+	_expect(errors, is_zero_approx(world.tier_timer(0, 0)), "timer resets after the step")
+	_expect(errors, world.population(A) == SliceConstants.TIER_POP[1], "population follows the tier")
+	# The upgraded tile now loads its edge: tier 1 + tier 0 = 1 → 0.1 → one 1/8 step.
+	var congestion: ServerEvent = _first_kind(tick2, ServerEvent.Kind.CONGESTION_ALERT)
+	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, 0.125), "tier step crosses a congestion step")
+	_expect(errors, world.find_edge(Vector2i(0, 0), Vector2i(1, 0)) != null and is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(1, 0)).congestion, 0.125), "edge stores quantized congestion")
+	# Demand flips: pop 3 > jobs 2 closes the R gate (0.3 × 0.9 = 0.27 ≤ SAT_DOWN),
+	# so the tile falls back after TIER_DOWN_SECONDS while C grows on the open gate.
+	world.sim_tick(3)
+	world.sim_tick(4)
+	_expect(errors, world.tile_at(0, 0).building_tier == 0 and world.tile_at(1, 0).building_tier == 1, "closed R gate drops the tier while C rises")
+
+
+## R on its own road with two C tiles elsewhere keeps a positive R gate and a
+## lightly loaded edge all the way to tier 2 (two steps, four ticks).
+func _check_tier_two(errors: Array[String]) -> void:
+	var world = _world()
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, SliceConstants.Zone.R), "R")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(0, 1)), "R road to an empty lot")
+	_apply_ok(errors, world, A, GameCommand.set_zone(4, 0, SliceConstants.Zone.C), "C one")
+	_apply_ok(errors, world, A, GameCommand.set_zone(4, 1, SliceConstants.Zone.C), "C two")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(4, 0), Vector2i(4, 1)), "C road")
+	_apply_ok(errors, world, A, GameCommand.place_power(2, 2), "plant")
+	var reached := _ticks_until(world, 0, 0, 2, 4)
+	_expect(errors, reached == 4, "R reaches tier 2 on tick 4 (got %d)" % reached)
+	_expect(errors, world.population(A) == SliceConstants.TIER_POP[2], "tier 2 population")
+	_expect(errors, is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(0, 1)).congestion, 0.25), "tier 2 on an otherwise empty edge loads it to 2/10 → 2/8")
+	# pop 8 > jobs 4 now closes the R gate: the down timer runs, no up timer ever does.
+	world.sim_tick(5)
+	_expect(errors, world.tile_at(0, 0).building_tier == 2 and world.tier_timer(0, 0) <= 0.0, "max tier never accumulates an up timer")
+
+
+func _check_no_road(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	_apply_ok(errors, world, A, GameCommand.remove_edge(Vector2i(0, 0), Vector2i(1, 0)), "remove the road")
+	for tick in 4:
+		world.sim_tick(tick + 1)
+	_expect(errors, world.tile_at(0, 0).building_tier == 0, "R without a road stays tier 0")
+	_expect(errors, is_zero_approx(world.satisfaction_raw(0, 0)) and is_zero_approx(world.tile_at(0, 0).satisfaction), "R without a road has zero satisfaction")
+
+
+func _check_no_power(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	_apply_ok(errors, world, A, GameCommand.remove_power(2, 2), "remove the plant")
+	_expect(errors, not world.tile_at(0, 0).power_covered, "coverage gone")
+	for tick in 4:
+		world.sim_tick(tick + 1)
+	_expect(errors, world.tile_at(0, 0).building_tier == 0, "R without power stays tier 0")
+	_expect(errors, is_zero_approx(world.satisfaction_raw(0, 0)), "R without power has zero satisfaction")
+
+
+## 21 tier-0 buildings inside one plant's radius load it to 21 > 20.
+func _check_brownout(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var plant := Vector2i(3, 3)
+	_apply_ok(errors, world, A, GameCommand.place_power(plant.x, plant.y), "plant")
+	var inside := _diamond_in_spawn(plant, SliceConstants.POWER_RADIUS)
+	_expect(errors, inside.size() > SliceConstants.POWER_PLANT_CAPACITY, "spawn holds enough tiles in the radius")
+	var alerted := false
+	var placed := 0
+	for cell in inside:
+		if placed >= SliceConstants.POWER_PLANT_CAPACITY + 1:
+			break
+		var result: Dictionary = world.apply(A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C))
+		_expect(errors, result["reason"] == ReasonCode.Id.OK, "zone C at %s" % cell)
+		placed += 1
+		var load: int = world.plant_load(plant.x, plant.y)
+		_expect(errors, load == placed, "plant load counts tier+1 per building (%d after %d)" % [load, placed])
+		var brown := load > SliceConstants.POWER_PLANT_CAPACITY
+		_expect(errors, world.tile_at(cell.x, cell.y).brownout == brown, "brownout flag after %d buildings" % placed)
+		for event in result["events"]:
+			if event.kind == ServerEvent.Kind.POWER_ALERT and event.power_alert.brownout and event.power_alert.x == plant.x and event.power_alert.y == plant.y:
+				alerted = true
+		if brown:
+			_expect(errors, _tile_delta_for(result["events"], plant.x, plant.y) != null and _tile_delta_for(result["events"], plant.x, plant.y).tile_delta.brownout, "brownout TileDelta reaches the plant tile")
+	_expect(errors, alerted, "PowerAlert(brownout=true) sent when the plant overloads")
+	_expect(errors, world.tile_at(0, 7).brownout == false and not world.tile_at(0, 7).power_covered, "tile outside the radius untouched")
+	var states: Array = world.faction_states()
+	_expect(errors, states[A].power_capacity == SliceConstants.POWER_PLANT_CAPACITY and states[A].power_load == SliceConstants.POWER_PLANT_CAPACITY + 1, "FactionState power capacity and load")
+	# An overloaded plant gives no actual power: served R stays dark and does not grow.
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(3, 0), Vector2i(4, 0)), "road for the brownout R")
+	_apply_ok(errors, world, A, GameCommand.set_zone(3, 0, SliceConstants.Zone.R), "R under brownout")
+	for tick in 3:
+		world.sim_tick(tick + 1)
+	_expect(errors, is_zero_approx(world.satisfaction_raw(3, 0)) and world.tile_at(3, 0).building_tier == 0, "brownout R has zero satisfaction")
+	var summary: RegionSummary = world.summary_for(InterestId.new(0, 0))
+	_expect(errors, summary.brownout and summary.power_alert and summary.population == SliceConstants.TIER_POP[0] and summary.crisis == false, "RegionSummary reports brownout, shortage, population")
+	# Demolishing two buildings clears it and sends the all-clear.
+	var cleared := false
+	for cell in inside.slice(0, 2):
+		var result: Dictionary = world.apply(A, GameCommand.demolish_own(cell.x, cell.y))
+		for event in result["events"]:
+			if event.kind == ServerEvent.Kind.POWER_ALERT and not event.power_alert.brownout and event.power_alert.x == plant.x:
+				cleared = true
+	_expect(errors, cleared and not world.tile_at(plant.x, plant.y).brownout, "brownout clears when the load drops")
+
+
+## Three A industrial tiles at the spawn corner pollute a B residential tile across
+## the border; its satisfaction is lower than B's identical control tile.
+func _check_pollution_cross_owner(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var spawn_b: Vector2i = WorldStateScript.SPAWN_B
+	var side := WorldStateScript.SPAWN_SIZE
+	# B walks a claim chain from its spawn to the corner next to A's spawn.
+	_claim_line(errors, world, B, Vector2i(spawn_b.x, spawn_b.y - 1), Vector2i(0, -1), spawn_b.y - side)
+	_claim_line(errors, world, B, Vector2i(spawn_b.x - 1, side), Vector2i(-1, 0), spawn_b.x - side)
+	_apply_ok(errors, world, B, GameCommand.claim_tile(side, side - 1), "B claims the border tile")
+	_apply_ok(errors, world, B, GameCommand.claim_tile(side + 1, side - 1), "B claims its C tile")
+	var victim := Vector2i(side, side - 1)
+	_apply_ok(errors, world, B, GameCommand.set_zone(victim.x, victim.y, SliceConstants.Zone.R), "B R at the border")
+	_apply_ok(errors, world, B, GameCommand.set_zone(side + 1, side - 1, SliceConstants.Zone.C), "B C at the border")
+	_apply_ok(errors, world, B, GameCommand.add_edge(victim, Vector2i(side + 1, side - 1)), "B border road")
+	_apply_ok(errors, world, B, GameCommand.place_power(side + 1, side), "B border plant")
+	# B control block at its own spawn, same recipe, far from any industry.
+	_apply_ok(errors, world, B, GameCommand.set_zone(spawn_b.x, spawn_b.y, SliceConstants.Zone.R), "B control R")
+	_apply_ok(errors, world, B, GameCommand.set_zone(spawn_b.x + 1, spawn_b.y, SliceConstants.Zone.C), "B control C")
+	_apply_ok(errors, world, B, GameCommand.add_edge(spawn_b, spawn_b + Vector2i(1, 0)), "B control road")
+	_apply_ok(errors, world, B, GameCommand.place_power(spawn_b.x + 2, spawn_b.y + 2), "B control plant")
+	# A industry hugging the corner.
+	var sources: Array[Vector2i] = [Vector2i(side - 1, side - 1), Vector2i(side - 1, side - 2), Vector2i(side - 2, side - 1)]
+	for source in sources:
+		_apply_ok(errors, world, A, GameCommand.set_zone(source.x, source.y, SliceConstants.Zone.I), "A industry at %s" % source)
+	_expect(errors, world.tile_at(victim.x, victim.y).owner == B, "victim is owned by B")
+	var raw: float = world.pollution_raw(victim.x, victim.y)
+	_expect(errors, raw > 0.0, "pollution crosses the owner border (got %s)" % raw)
+	_expect(errors, world.tile_at(victim.x, victim.y).pollution > 0.0, "quantized pollution is on the B tile")
+	var neutral := Vector2i(side - 1, side + 2)
+	_expect(errors, world.tile_at(neutral.x, neutral.y).owner == SliceConstants.Owner.NEUTRAL and world.pollution_raw(neutral.x, neutral.y) > 0.0, "pollution reaches a neutral tile too")
+	_expect(errors, is_zero_approx(world.pollution_raw(side - 1, side + 3)), "pollution stops at POLLUTION_RADIUS")
+	# Linear falloff: the source tile itself is more polluted than one step away.
+	_expect(errors, world.pollution_raw(side - 1, side - 1) > raw, "pollution peaks at the source")
+	_expect(errors, world.summary_for(InterestId.from_tile(side - 1, side - 1)).pollution_avg > 0.0 and is_zero_approx(world.summary_for(InterestId.from_tile(spawn_b.x, spawn_b.y)).pollution_avg), "RegionSummary pollution_avg follows the field")
+	world.sim_tick(1)
+	var polluted: float = world.satisfaction_raw(victim.x, victim.y)
+	var control: float = world.satisfaction_raw(spawn_b.x, spawn_b.y)
+	_expect(errors, control > 0.0 and polluted < control, "pollution lowers satisfaction across the border (%s < %s)" % [polluted, control])
+	_expect(errors, world.tile_at(victim.x, victim.y).satisfaction < world.tile_at(spawn_b.x, spawn_b.y).satisfaction, "quantized satisfaction shows the drop")
+	# Removing the industry removes the field exactly (integer mass, no drift).
+	for source in sources:
+		_apply_ok(errors, world, A, GameCommand.set_zone(source.x, source.y, SliceConstants.Zone.NONE), "clear industry at %s" % source)
+	_expect(errors, is_zero_approx(world.pollution_raw(victim.x, victim.y)) and is_zero_approx(world.tile_at(victim.x, victim.y).pollution), "pollution returns to zero")
+
+
+## 15 buildings under one plant fit in 20 but not in 20 × CRISIS_CAPACITY_FACTOR.
+func _check_crisis(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var plant := Vector2i(3, 3)
+	_apply_ok(errors, world, A, GameCommand.place_power(plant.x, plant.y), "plant")
+	var inside := _diamond_in_spawn(plant, SliceConstants.POWER_RADIUS)
+	var load := 15
+	for cell in inside.slice(0, load):
+		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C), "C at %s" % cell)
+	world.sim_tick(1)
+	_expect(errors, not world.tile_at(plant.x, plant.y).brownout and world.plant_load(plant.x, plant.y) == load, "plant copes before the storm")
+	_expect(errors, not _has_kind(world.sim_tick(2), ServerEvent.Kind.CRISIS_EVENT), "no CrisisEvent without set_crisis")
+
+	var now := int(Time.get_unix_time_from_system())
+	world.set_crisis(true)
+	_expect(errors, world.crisis_active and world.crisis_ends_at_unix >= now + SliceConstants.CRISIS_DURATION_SEC, "set_crisis(true) sets the end time")
+	_expect(errors, world.plant_capacity() == int(SliceConstants.POWER_PLANT_CAPACITY * SliceConstants.CRISIS_CAPACITY_FACTOR), "capacity halves during the storm")
+	var storm: Array = world.sim_tick(3)
+	var crisis: ServerEvent = _first_kind(storm, ServerEvent.Kind.CRISIS_EVENT)
+	_expect(errors, crisis != null and crisis.crisis_event.active and crisis.crisis_event.kind == CrisisEvent.KIND_GRID_STORM, "CrisisEvent grid_storm active")
+	_expect(errors, crisis != null and crisis.crisis_event.ends_at_unix == world.crisis_ends_at_unix, "CrisisEvent carries ends_at_unix")
+	_expect(errors, world.tile_at(plant.x, plant.y).brownout and world.tile_at(inside[0].x, inside[0].y).brownout, "storm browns out the plant's radius")
+	var alert: ServerEvent = _first_kind(storm, ServerEvent.Kind.POWER_ALERT)
+	_expect(errors, alert != null and alert.power_alert.brownout, "storm sends PowerAlert(brownout=true)")
+	_expect(errors, _count_kind(storm, ServerEvent.Kind.CRISIS_EVENT) == 1 and not _has_kind(world.sim_tick(4), ServerEvent.Kind.CRISIS_EVENT), "CrisisEvent sent once")
+	var states: Array = world.faction_states()
+	_expect(errors, states[A].power_capacity == world.plant_capacity() and states[A].power_load == load, "FactionState reflects storm capacity")
+
+	world.set_crisis(false)
+	_expect(errors, not world.crisis_active and world.crisis_ends_at_unix == 0, "set_crisis(false) clears")
+	var calm: Array = world.sim_tick(5)
+	var over: ServerEvent = _first_kind(calm, ServerEvent.Kind.CRISIS_EVENT)
+	_expect(errors, over != null and not over.crisis_event.active and over.crisis_event.ends_at_unix == 0, "CrisisEvent inactive after the storm")
+	_expect(errors, not world.tile_at(plant.x, plant.y).brownout, "brownout clears after the storm")
+	var custom = _world()
+	custom.set_crisis(true, 1234567)
+	_expect(errors, custom.crisis_ends_at_unix == 1234567, "explicit ends_at_unix is kept")
+
+
+func _check_tax_rate(errors: Array[String]) -> void:
+	var world = _world()
+	for bad in [SliceConstants.TAX_RATE_MAX + 0.01, SliceConstants.TAX_RATE_MIN - 0.01, 2.0, INF, NAN]:
+		var result: Dictionary = world.apply(A, GameCommand.set_tax_rate(bad))
+		_expect(errors, result["reason"] == ReasonCode.Id.INVALID_RATE and result["events"].is_empty(), "tax %s rejected INVALID_RATE" % bad)
+	_expect(errors, is_equal_approx(world.tax_rate(A), SliceConstants.TAX_RATE_DEFAULT), "rejected rates leave the tax untouched")
+	_expect(errors, GameCommand.set_tax_rate(SliceConstants.TAX_RATE_MAX + 0.01).validate_shape() == ReasonCode.Id.INVALID_RATE, "validate_shape rejects the range")
+	var ok: Dictionary = world.apply(A, GameCommand.set_tax_rate(SliceConstants.TAX_RATE_MAX))
+	_expect(errors, ok["reason"] == ReasonCode.Id.OK and is_equal_approx(world.tax_rate(A), SliceConstants.TAX_RATE_MAX), "max tax accepted")
+	_expect(errors, is_equal_approx(world.tax_rate(B), SliceConstants.TAX_RATE_DEFAULT), "tax is per faction")
+	var nobody: Dictionary = world.apply(SliceConstants.Owner.NEUTRAL, GameCommand.set_tax_rate(0.2))
+	_expect(errors, nobody["reason"] == ReasonCode.Id.NOT_AUTHENTICATED and nobody["events"].is_empty(), "a command without a faction is NOT_AUTHENTICATED")
+	_expect(errors, is_equal_approx(world.faction_states()[A].tax_rate, SliceConstants.TAX_RATE_MAX), "FactionState carries the rate")
+
+	# Same served R, two tax rates: the higher rate lowers satisfaction linearly.
+	var low = _world()
+	_build_served_r(errors, low)
+	var high = _world()
+	_build_served_r(errors, high)
+	_apply_ok(errors, high, A, GameCommand.set_tax_rate(SliceConstants.TAX_RATE_MAX), "high tax")
+	low.sim_tick(1)
+	high.sim_tick(1)
+	var sat_low: float = low.satisfaction_raw(0, 0)
+	var sat_high: float = high.satisfaction_raw(0, 0)
+	_expect(errors, is_equal_approx(sat_low, 1.0 - SliceConstants.TAX_RATE_DEFAULT) and is_equal_approx(sat_high, 1.0 - SliceConstants.TAX_RATE_MAX), "tax penalty is 1 − rate (%s, %s)" % [sat_low, sat_high])
+	_expect(errors, high.tile_at(0, 0).satisfaction < low.tile_at(0, 0).satisfaction, "high tax lowers the quantized satisfaction")
+	# Higher tax also raises income per population.
+	var income_low: float = low.faction_states()[A].income_per_sec
+	var income_high: float = high.faction_states()[A].income_per_sec
+	_expect(errors, income_high > income_low, "high tax raises income (%s > %s)" % [income_high, income_low])
+
+
+## One tick, save, restore, one more tick: the tier step lands on the restored world.
+func _check_save_roundtrip_timer(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	_apply_ok(errors, world, A, GameCommand.set_tax_rate(0.2), "tax before save")
+	world.sim_tick(1)
+	world.set_crisis(true)
+	var timer_before: float = world.tier_timer(0, 0)
+	_expect(errors, timer_before > 0.0, "timer running before save")
+	var save: Dictionary = world.to_save_dict()
+	for key in ["pace", "factions", "tier_timers", "crisis_pending", "crisis_ends_at_unix"]:
+		_expect(errors, save.has(key), "save has %s" % key)
+	_expect(errors, save["tier_timers"].size() >= 1 and int(save["tier_timers"][0][0]) == SliceConstants.tile_id(0, 0), "tier_timers stores the R tile")
+	var parsed = JSON.parse_string(JSON.stringify(save))
+	var restored = WorldStateScript.from_save_dict(parsed)
+	if restored == null:
+		errors.append("from_save_dict returned null")
+		return
+	_expect(errors, is_equal_approx(restored.pace, TEST_PACE), "pace restored")
+	_expect(errors, is_equal_approx(restored.tier_timer(0, 0), timer_before), "timer restored (%s vs %s)" % [restored.tier_timer(0, 0), timer_before])
+	_expect(errors, is_equal_approx(restored.treasury(A), world.treasury(A)) and is_equal_approx(restored.tax_rate(A), 0.2), "treasury and tax restored")
+	_expect(errors, restored.population(A) == world.population(A) and restored.jobs(A) == world.jobs(A), "counters rebuilt from tiles")
+	_expect(errors, restored.crisis_active and restored.crisis_ends_at_unix == world.crisis_ends_at_unix and restored.plant_capacity() == world.plant_capacity(), "crisis restored")
+	_expect(errors, restored.tile_at(0, 0).power_covered and restored.find_edge(Vector2i(0, 0), Vector2i(1, 0)) != null, "structure restored")
+	_expect(errors, JSON.stringify(restored.to_save_dict()) == JSON.stringify(save), "second save text equals first")
+	var next: Array = restored.sim_tick(2)
+	_expect(errors, restored.tile_at(0, 0).building_tier == 1, "restored timer continues: tier 1 after one more tick")
+	_expect(errors, _has_kind(next, ServerEvent.Kind.CRISIS_EVENT), "pending CrisisEvent survives the save")
+	var control = _world()
+	_build_served_r(errors, control)
+	control.sim_tick(1)
+	_expect(errors, control.tile_at(0, 0).building_tier == 0, "a fresh world needs two ticks")
+
+
+## Income per second matches the formula and the treasury moves by it each tick.
+func _check_income(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	world.sim_tick(1)
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(0, 0).building_tier == 1, "income scenario at tier 1")
+	var pop: int = world.population(A)
+	var jobs: int = world.jobs(A)
+	var rate: float = world.tax_rate(A)
+	var base := float(pop) * rate * SliceConstants.INCOME_PER_POP_PER_SEC + float(jobs) * SliceConstants.INCOME_PER_JOB_PER_SEC - 1.0 * SliceConstants.UPKEEP_POWER_PER_SEC
+	var expected := base / TEST_PACE
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.population == pop and state.jobs == jobs and state.technicians == 0, "FactionState counters")
+	_expect(errors, is_equal_approx(state.income_per_sec, expected), "income_per_sec %s (got %s)" % [expected, state.income_per_sec])
+	_expect(errors, is_equal_approx(state.demand_r, float(jobs - pop) / float(jobs + pop)), "demand_r normalized")
+	_expect(errors, is_equal_approx(state.demand_c, float(pop - jobs) / float(pop + jobs)) and is_equal_approx(state.demand_i, 1.0), "demand_c and demand_i normalized")
+	_expect(errors, state.power_capacity == SliceConstants.POWER_PLANT_CAPACITY and state.power_load == 3, "power load counts tier+1 of R(1) and C(0)")
+	var before: float = world.treasury(A)
+	world.sim_tick(3)
+	_expect(errors, is_equal_approx(world.treasury(A), before + expected * SliceConstants.SIM_TICK_SEC), "treasury moves by income × SIM_TICK_SEC")
+	# At pace 1.0 the per-second income is the bare formula.
+	var slow = _world(1.0)
+	_build_served_r(errors, slow)
+	var slow_base := float(slow.population(A)) * SliceConstants.TAX_RATE_DEFAULT * SliceConstants.INCOME_PER_POP_PER_SEC + float(slow.jobs(A)) * SliceConstants.INCOME_PER_JOB_PER_SEC - SliceConstants.UPKEEP_POWER_PER_SEC
+	_expect(errors, is_equal_approx(slow.faction_states()[A].income_per_sec, slow_base), "pace 1.0 income is the formula")
+	_expect(errors, is_equal_approx(world.faction_states()[B].treasury, float(SliceConstants.START_TREASURY)), "idle faction earns nothing")
+	# Score: pop, treasury, owned tiles, normalized shares.
+	var tick: ScoreTick = world.score(42)
+	_expect(errors, tick.seconds_remaining == 42 and tick.factions.size() == 2, "score carries seconds_remaining")
+	_expect(errors, is_equal_approx(tick.factions[A].pop_raw, float(pop)) and is_equal_approx(tick.factions[A].fiscal_raw, world.treasury(A)) and is_equal_approx(tick.factions[A].control_raw, float(world.owned_count(A))), "score raw terms")
+	_expect(errors, is_equal_approx(tick.factions[A].pop, 1.0) and is_equal_approx(tick.factions[A].control, 0.5), "score shares normalized")
+
+
+## At pace 1.0 nothing crosses a step on the second tick: no TileDelta goes out,
+## and every tick sends at most one TileDelta per tile.
+func _check_event_quantization(errors: Array[String]) -> void:
+	var world = _world(1.0)
+	_build_served_r(errors, world)
+	var tick1: Array = world.sim_tick(1)
+	var ids: Dictionary = {}
+	for event in tick1:
+		if event.kind == ServerEvent.Kind.TILE_DELTA:
+			_expect(errors, not ids.has(event.tile_delta.id), "one TileDelta per tile per tick")
+			ids[event.tile_delta.id] = true
+	_expect(errors, ids.has(SliceConstants.tile_id(0, 0)) and ids.has(SliceConstants.tile_id(1, 0)), "first tick sends the satisfaction steps")
+	_expect(errors, is_equal_approx(_tile_delta_for(tick1, 1, 0).tile_delta.satisfaction, 0.25), "closed demand gate shows as 0.3 × 0.9 → 2/8 (got %s)" % _tile_delta_for(tick1, 1, 0).tile_delta.satisfaction)
+	var tick2: Array = world.sim_tick(2)
+	_expect(errors, _count_kind(tick2, ServerEvent.Kind.TILE_DELTA) == 0, "no TileDelta while nothing crosses a step (got %d)" % _count_kind(tick2, ServerEvent.Kind.TILE_DELTA))
+	_expect(errors, _count_kind(tick2, ServerEvent.Kind.CONGESTION_ALERT) == 0 and _count_kind(tick2, ServerEvent.Kind.POWER_ALERT) == 0, "no alerts while nothing changes")
+	_expect(errors, _count_kind(tick2, ServerEvent.Kind.SCORE_TICK) == 1, "ScoreTick every tick")
+	_expect(errors, world.tier_timer(0, 0) > world.tier_timer(1, 0), "timers still accumulate silently")
+	# Pollution: quantized value only moves on a step. One tier-0 factory alone puts
+	# 1/44 on a tile three steps away: raw > 0 but quantized 0, so no TileDelta there.
+	var result: Dictionary = world.apply(A, GameCommand.set_zone(4, 4, SliceConstants.Zone.I))
+	_expect(errors, world.pollution_raw(4, 7) > 0.0 and is_zero_approx(world.tile_at(4, 7).pollution), "sub-step pollution is not quantized up")
+	_expect(errors, _tile_delta_for(result["events"], 4, 7) == null and _tile_delta_for(result["events"], 4, 4) != null, "TileDelta only where the pollution step moved")
+
+
+## Zoning a different type starts a new tier-0 building; demolition keeps the zone.
+func _check_zone_change(errors: Array[String]) -> void:
+	var world = _world()
+	_build_served_r(errors, world)
+	world.sim_tick(1)
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(0, 0).building_tier == 1, "zone change scenario at tier 1")
+	var same: Dictionary = world.apply(A, GameCommand.set_zone(0, 0, SliceConstants.Zone.R))
+	_expect(errors, same["reason"] == ReasonCode.Id.OK and world.tile_at(0, 0).building_tier == 1, "same zone keeps the building")
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, SliceConstants.Zone.C), "re-zone to C")
+	_expect(errors, world.tile_at(0, 0).building_tier == 0 and world.population(A) == 0 and world.jobs(A) == 2 * SliceConstants.TIER_JOBS[0], "re-zoning resets the tier and moves the counters")
+	_apply_ok(errors, world, A, GameCommand.demolish_own(0, 0), "demolish")
+	_expect(errors, world.tile_at(0, 0).zone == SliceConstants.Zone.C and not world.tile_at(0, 0).has_building and world.jobs(A) == SliceConstants.TIER_JOBS[0], "demolition keeps the zone and drops the jobs")
+	_expect(errors, is_zero_approx(world.tile_at(0, 0).satisfaction), "demolished tile has zero satisfaction")
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, SliceConstants.Zone.C), "rebuild")
+	_expect(errors, world.tile_at(0, 0).has_building and world.tile_at(0, 0).building_tier == 0, "same zone on a demolished lot rebuilds at tier 0")
+
+
+## 100 ticks at pace 0.01 on three maps: empty; a 64×64 city with every tile zoned
+## and plants every six tiles (41 buildings per plant: all dark, no growth, the
+## pass still visits 4096 tiles); and a 64×64 city with one tile in three zoned and
+## plants every four tiles (≈ 14 buildings per plant: everything served, tiers
+## keep moving every two ticks, pollution and congestion churn).
+func _check_perf(errors: Array[String]) -> void:
+	var empty = _world()
+	var empty_avg := _time_ticks(empty, PERF_TICKS)
+
+	var dark = _world()
+	var dark_stats := _build_city(errors, dark, 1, 6)
+	if dark_stats.is_empty():
+		return
+	var dark_avg := _time_ticks(dark, PERF_TICKS)
+	_expect(errors, dark.population(A) == dark_stats["r_tiles"], "over-loaded city stays at tier 0 (population %d)" % dark.population(A))
+
+	var live = _world()
+	var live_stats := _build_city(errors, live, 3, 4)
+	if live_stats.is_empty():
+		return
+	var live_avg := _time_ticks(live, PERF_TICKS)
+	var pop: int = live.population(A)
+	_expect(errors, pop > live_stats["r_tiles"], "served city grew (population %d from %d R tiles)" % [pop, live_stats["r_tiles"]])
+	# The same served city at pace 1.0: timers accumulate but no tier moves inside
+	# 100 ticks, which is the steady-state cost of a real round.
+	var steady = _world(1.0)
+	var steady_stats := _build_city(errors, steady, 3, 4)
+	if steady_stats.is_empty():
+		return
+	var steady_avg := _time_ticks(steady, PERF_TICKS)
+	_perf_line = "SIM_PERF ticks=%d empty_avg_ms=%.3f | dark pace=%.2f avg_ms=%.3f active=%d edges=%d plants=%d | churn pace=%.2f avg_ms=%.3f active=%d edges=%d plants=%d population=%d | steady pace=1.00 avg_ms=%.3f active=%d | setup_ms=%.0f" % [
+		PERF_TICKS, empty_avg,
+		TEST_PACE, dark_avg, dark_stats["active"], dark_stats["edges"], dark_stats["plants"],
+		TEST_PACE, live_avg, live_stats["active"], live_stats["edges"], live_stats["plants"], pop,
+		steady_avg, steady_stats["active"],
+		live_stats["setup_ms"],
+	]
+
+
+## Faction A claims PERF_SIDE², zones every zone_stride-th tile (R, R, C, I in
+## turn), lays a road along every row plus an avenue every four rows, and places a
+## plant every plant_stride tiles. Returns counts, or {} when a command failed.
+func _build_city(errors: Array[String], world, zone_stride: int, plant_stride: int) -> Dictionary:
+	world.free_build = true
+	var side := PERF_SIDE
+	var start := Time.get_ticks_usec()
+	for y in side:
+		for x in side:
+			if world.tile_at(x, y).owner != A:
+				var result: Dictionary = world.apply(A, GameCommand.claim_tile(x, y))
+				if result["reason"] != ReasonCode.Id.OK:
+					errors.append("perf claim (%d,%d) reason %d" % [x, y, result["reason"]])
+					return {}
+	var zones: Array = [SliceConstants.Zone.R, SliceConstants.Zone.R, SliceConstants.Zone.C, SliceConstants.Zone.I]
+	var active := 0
+	var r_tiles := 0
+	var index := 0
+	for y in side:
+		for x in side:
+			if (x + y) % zone_stride != 0:
+				continue
+			var zone: int = zones[index % zones.size()]
+			index += 1
+			world.apply(A, GameCommand.set_zone(x, y, zone))
+			active += 1
+			if zone == SliceConstants.Zone.R:
+				r_tiles += 1
+	var edges := 0
+	for y in side:
+		for x in side:
+			if x + 1 < side:
+				world.apply(A, GameCommand.add_edge(Vector2i(x, y), Vector2i(x + 1, y)))
+				edges += 1
+			if y % 4 == 0 and y + 1 < side:
+				world.apply(A, GameCommand.add_edge(Vector2i(x, y), Vector2i(x, y + 1)))
+				edges += 1
+	var plants := 0
+	for y in range(2, side, plant_stride):
+		for x in range(2, side, plant_stride):
+			world.apply(A, GameCommand.place_power(x, y))
+			plants += 1
+	return {
+		"active": active,
+		"r_tiles": r_tiles,
+		"edges": edges,
+		"plants": plants,
+		"setup_ms": float(Time.get_ticks_usec() - start) / 1000.0,
+	}
+
+
+# --- Builders --------------------------------------------------------------------
+
+
+func _world(pace: float = TEST_PACE):
+	var world = WorldStateScript.new()
+	world.pace = pace
+	return world
+
+
+## R at (0,0) with a road to the C at (1,0) and a plant at (2,2) that covers both.
+func _build_served_r(errors: Array[String], world) -> void:
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, SliceConstants.Zone.R), "served R zone")
+	_apply_ok(errors, world, A, GameCommand.set_zone(1, 0, SliceConstants.Zone.C), "served R jobs")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "served R road")
+	_apply_ok(errors, world, A, GameCommand.place_power(2, 2), "served R plant")
+	_expect(errors, world.tile_at(0, 0).power_covered and not world.tile_at(0, 0).brownout, "served R has power")
+
+
+## Ticks until the tile reaches the tier; 0 when it does not within the limit.
+func _ticks_until(world, x: int, y: int, tier: int, limit: int) -> int:
+	for i in limit:
+		world.sim_tick(100 + i)
+		if world.tile_at(x, y).building_tier == tier:
+			return i + 1
+	return 0
+
+
+func _claim_line(errors: Array[String], world, faction: int, start: Vector2i, step: Vector2i, count: int) -> void:
+	var cell := start
+	for i in count:
+		var result: Dictionary = world.apply(faction, GameCommand.claim_tile(cell.x, cell.y))
+		if result["reason"] != ReasonCode.Id.OK:
+			errors.append("claim chain %s reason %d" % [cell, result["reason"]])
+			return
+		cell += step
+
+
+## Tiles of faction A's spawn inside the Manhattan radius around center, excluding
+## the center itself, nearest first.
+func _diamond_in_spawn(center: Vector2i, radius: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for d in range(1, radius + 1):
+		for y in WorldStateScript.SPAWN_SIZE:
+			for x in WorldStateScript.SPAWN_SIZE:
+				if absi(x - center.x) + absi(y - center.y) == d:
+					cells.append(Vector2i(x, y))
+	return cells
+
+
+func _time_ticks(world, ticks: int) -> float:
+	var start := Time.get_ticks_usec()
+	for i in ticks:
+		world.sim_tick(i + 1)
+	return float(Time.get_ticks_usec() - start) / 1000.0 / float(ticks)
+
+
+# --- Assertions ----------------------------------------------------------------
+
+
+func _apply_ok(errors: Array[String], world, faction: int, cmd: GameCommand, label: String) -> Dictionary:
+	var result: Dictionary = world.apply(faction, cmd)
+	if result["reason"] != ReasonCode.Id.OK:
+		errors.append("setup %s rejected reason=%d detail=%s" % [label, result["reason"], result["detail"]])
+	return result
+
+
+func _tile_delta_for(events: Array, x: int, y: int) -> ServerEvent:
+	for event in events:
+		if event.kind == ServerEvent.Kind.TILE_DELTA and event.tile_delta.x == x and event.tile_delta.y == y:
+			return event
+	return null
+
+
+func _has_kind(events: Array, kind: int) -> bool:
+	return _first_kind(events, kind) != null
+
+
+func _count_kind(events: Array, kind: int) -> int:
+	var count := 0
+	for event in events:
+		if event.kind == kind:
+			count += 1
+	return count
+
+
+func _first_kind(events: Array, kind: int) -> ServerEvent:
+	for event in events:
+		if event.kind == kind:
+			return event
+	return null
+
+
+func _perf_note(text: String) -> void:
+	print("SIM_NOTE %s" % text)
+
+
+func _expect(errors: Array[String], cond: bool, message: String) -> void:
+	if not cond:
+		errors.append(message)
