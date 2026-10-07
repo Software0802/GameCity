@@ -232,3 +232,7 @@ overlay（阵营 A / B、分区 R / C / I、电力、拥堵）不写进世界材
 - 没有验证 MetalFX 0.67× 是不是交互档的最优缩放，也没有做 FSR2 / MetalFX 的画质对照图。
 - MSAA 8× 的早期数据不可信，没有重测。
 - 贴图和 HDRI 的 `.import` 是脚本生成的（BPTC 压缩、带 mipmap），首次 `--import` 本机实测 2:11。
+
+## 11. 2026-10-08 补渲（集成者）
+
+负责人批准后重渲了 `s02_far`、`s00_cinematic_day`、`s00_cinematic_day_4k`、`s01_hero_day_4k`（修复后的代码：地形 6000 m、远景 VoxelGI 体积 1100 m / 细分 256、电影镜头远平面 7000 m）。顶部露天和左缘光斑已消失。`s02_far` 的地形中部仍有一条横向的浅色带，疑似远景 VoxelGI 体积边界或地形分块接缝，留给 M4 处理。本次 draw_ms：s02_far 49.2、s00_cinematic_day 71.3、s00_cinematic_day_4k 229.7、s01_hero_day_4k 181.1（机器已热，仅供参考）。
