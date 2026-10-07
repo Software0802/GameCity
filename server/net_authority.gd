@@ -248,11 +248,6 @@ func hello(p_name: String = "", p_token: String = "", protocol: int = SliceConst
 ## Listen-host is gone: the only server is res://server/main.tscn. This stub keeps
 ## the H key / --listen path in client/presentation.gd compiling until client-play
 ## removes it; it never opens a socket.
-func host(_port: int = DEFAULT_PORT) -> Error:
-	push_warning("GameNet.host: listen-host was removed; run res://server/main.tscn")
-	return ERR_UNAVAILABLE
-
-
 func close_peer() -> void:
 	if not _enet_active():
 		return
@@ -366,12 +361,12 @@ func _on_connected_to_server() -> void:
 
 
 func _on_server_disconnected() -> void:
-	# OfflineMultiplayerPeer is the editor default and reports as server; only a
-	# connected client should treat this as losing the server.
-	if multiplayer.is_server():
+	# Only a client holding an ENet peer receives this. The editor's default
+	# OfflineMultiplayerPeer is skipped here, and is_server() is not consulted:
+	# on a dropped ENet peer it logs "multiplayer instance isn't currently active".
+	if not _enet_active():
 		return
-	if _enet_active():
-		multiplayer.multiplayer_peer = null
+	multiplayer.multiplayer_peer = null
 	connection_lost.emit()
 
 
