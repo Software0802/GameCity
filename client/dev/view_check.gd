@@ -8,17 +8,32 @@ extends Node3D
 ## that rebuild costs stay inside the M4 budget (one block <= 8 ms, 256 blocks <= 2 s), and
 ## that the camera's tile <-> screen mapping round-trips in metres. Prints VIEW_OK and exits 0.
 ##   godot --headless --path . res://client/dev/view_check.tscn
+##
+## Windowed stress probe (worst case for the frame budget, not part of the headless check):
+##   godot --path . --resolution 1920x1080 res://client/dev/view_check.tscn -- --stress \
+##     [--stress-size <metres>] [--screenshot <png>]
+## Nine subscribed blocks (1..3 x 1..3) full of buildings on a road grid (576 buildings), lit
+## like main.tscn (LiveLighting + Sun), camera on the middle at --stress-size (default 660 m);
+## WorldView prints VIEW_PERF every 60 frames; quits after STRESS_FRAMES with the screenshot.
 
 const BUDGET_BLOCK_MS := 8.0
 const BUDGET_ALL_MS := 2000.0
+const STRESS_FRAMES := 300
+const STRESS_SIZE_DEFAULT := 660.0
 
 var _failures: Array[String] = []
 var session: ClientSession
 var view: WorldView
 var camera: CameraRig
+var _stress := false
+var _stress_frames := 0
 
 
 func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	_stress = args.has("--stress") and DisplayServer.get_name() != "headless"
+	if _stress:
+		OS.set_environment("GAMECITY_VIEW_PERF", "1")
 	session = ClientSession.new()
 	session.name = "Session"
 	add_child(session)
@@ -29,6 +44,9 @@ func _ready() -> void:
 	camera.name = "Camera"
 	add_child(camera)
 	view.bind(session)
+	if _stress:
+		_stress_setup(args)
+		return
 	_run()
 	if _failures.is_empty():
 		print("VIEW_OK")
@@ -37,6 +55,74 @@ func _ready() -> void:
 		for line in _failures:
 			printerr("VIEW_FAIL " + line)
 		get_tree().quit(1)
+
+
+func _stress_setup(args: PackedStringArray) -> void:
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	add_child(sun)
+	var env := LiveLighting.new()
+	env.name = "Env"
+	env.sun_path = ^"../Sun"
+	env.camera_path = ^"../Camera"
+	add_child(env)
+	var welcome := ServerWelcome.new()
+	welcome.faction = SliceConstants.Owner.FACTION_A
+	_emit(ServerEvent.with_welcome(welcome))
+	_emit(ServerEvent.with_match_start(MatchStart.new()))
+	var open := InterestUpdate.new()
+	for by in range(1, 4):
+		for bx in range(1, 4):
+			open.add.append(InterestId.new(bx, by))
+	_emit(ServerEvent.with_interest_update(open))
+	# the whole district arrives as one burst of events, like a server interest add: the view
+	# coalesces them into one rebuild pass per block (flush_dirty at the end)
+	var t0 := Time.get_ticks_usec()
+	var n := 0
+	for y in range(8, 32):
+		for x in range(8, 32):
+			if x < 31 and y % 2 == 0:
+				_emit_raw(ServerEvent.with_edge_delta(WorldState.ordered_edge(Vector2i(x, y), Vector2i(x + 1, y))))
+			if y < 31 and x % 3 == 0:
+				_emit_raw(ServerEvent.with_edge_delta(WorldState.ordered_edge(Vector2i(x, y), Vector2i(x, y + 1))))
+	for y in range(8, 32):
+		for x in range(8, 32):
+			var tile := TileDelta.from_cell(x, y)
+			tile.owner = SliceConstants.Owner.FACTION_A if x < 20 else SliceConstants.Owner.FACTION_B
+			tile.zone = [SliceConstants.Zone.R, SliceConstants.Zone.C, SliceConstants.Zone.I][(x + y) % 3]
+			tile.has_building = true
+			tile.building_tier = (x / 2 + y) % 3
+			tile.power_covered = true
+			tile.brownout = (x + y) % 11 == 0
+			tile.satisfaction = 0.75
+			tile.pollution = 0.3 if tile.zone == SliceConstants.Zone.I else 0.0
+			_emit_raw(ServerEvent.with_tile_delta(tile))
+			n += 1
+	var t_feed := (Time.get_ticks_usec() - t0) / 1000.0
+	view.flush_dirty()
+	print("VIEW_STRESS %d tiles fed in %.0f ms, one coalesced rebuild pass of %d detailed blocks (%d buildings) in %.0f ms" % [
+		n, t_feed, view.detailed_block_count(), _stress_buildings(), view.last_update_ms])
+	camera.focus_tile(20, 20)
+	var size := STRESS_SIZE_DEFAULT
+	var idx := args.find("--stress-size")
+	if idx != -1 and idx + 1 < args.size() and String(args[idx + 1]).is_valid_float():
+		size = float(args[idx + 1])
+	camera.set_ortho_size(size)
+
+
+func _process(_delta: float) -> void:
+	if not _stress:
+		return
+	_stress_frames += 1
+	if _stress_frames == STRESS_FRAMES:
+		var args := OS.get_cmdline_user_args()
+		var idx := args.find("--screenshot")
+		if idx != -1 and idx + 1 < args.size():
+			await RenderingServer.frame_post_draw
+			var image := get_viewport().get_texture().get_image()
+			var err := image.save_png(args[idx + 1])
+			print("SCREENSHOT %s %s %dx%d" % [args[idx + 1], error_string(err), image.get_width(), image.get_height()])
+		get_tree().quit(0)
 
 
 func _run() -> void:
@@ -81,7 +167,7 @@ func _run() -> void:
 
 	var near := view.block_view("0,0")
 	_expect(_summary_visible(near) == 0, "subscribed block hides its summary quad")
-	_expect(_mesh(near, "Roads") != null and _mesh(near, "Lots") != null and _mesh(near, "Overlay") != null, "subscribed block has ground, building and overlay meshes")
+	_expect(_mesh(near, "Roads") != null and _mesh(near, "Lots0") != null and _mesh(near, "Overlay") != null, "subscribed block has ground, building and overlay meshes")
 	_expect(int(near.stats.get("buildings", -1)) == 2, "two buildings (got %s)" % str(near.stats.get("buildings")))
 	var kinds: Dictionary = near.stats.get("kinds", {})
 	_expect(kinds.has("R2") and kinds.has("C0"), "an R tier-2 and a C tier-0 building were generated (got %s)" % str(kinds))
@@ -144,46 +230,58 @@ func _run() -> void:
 
 	# Optimistic claim shows up at once and the reject takes it back.
 	session.send_command(GameCommand.claim_tile(4, 4))
+	view.flush_dirty()
 	_expect(BlockView.tile_style(session.view_tile(4, 4))["ring"].is_equal_approx(Palette.FACTION_A), "pending claim draws the faction ring")
 	_expect(near.rebuild_count == near_before + 2, "pending claim rebuilt block 0,0")
 	_emit(ServerEvent.with_reject(CommandReject.new(GameCommand.claim_tile(4, 4), ReasonCode.Id.NOT_ADJACENT, "")))
 	_expect(BlockView.tile_style(session.view_tile(4, 4))["ring"].is_equal_approx(Palette.UNCLAIMED), "reject restores the unclaimed ring")
 	_expect(near.rebuild_count == near_before + 3, "reject rebuilt block 0,0 for the rollback")
 
-	# Seam hand-off: the seam edge 7,3-8,3 and its junctions 8,3 / 8,4 belong to block 0,0 while
-	# it is subscribed, whether or not 1,0 is; unsubscribing 0,0 hands them to 1,0.
+	# Seam hand-off. The seam edge 7,3-8,3 is the street piece between the nodes of tiles 7,3 and
+	# 8,3 (corners 8,4 and 9,4 on line y=4). While 0,0 is subscribed it draws the segment and the
+	# corner of its own tile 7,3; corner 9,4 belongs to 1,0 once that block is subscribed (its
+	# node tile 8,3) and falls back to the segment owner while it is not. Unsubscribing 0,0 hands
+	# segment and both corners to 1,0.
+	_expect(near.corners_drawn.has(Vector2i(8, 4)) and near.corners_drawn.has(Vector2i(9, 4)), "0,0 draws both seam corners while 1,0 is unsubscribed")
 	var open_right := InterestUpdate.new()
 	open_right.add.append(InterestId.new(1, 0))
 	_emit(ServerEvent.with_interest_update(open_right))
 	_expect(near.segments_drawn.has(seam_key) and not neighbour.segments_drawn.has(seam_key), "seam segment drawn once, by block 0,0")
-	_expect(near.corners_drawn.has(Vector2i(8, 3)) and near.corners_drawn.has(Vector2i(8, 4)), "seam junctions drawn by block 0,0")
-	_expect(not neighbour.corners_drawn.has(Vector2i(8, 3)) and not neighbour.corners_drawn.has(Vector2i(8, 4)), "block 1,0 does not duplicate the seam junctions")
+	_expect(near.corners_drawn.has(Vector2i(8, 4)) and not near.corners_drawn.has(Vector2i(9, 4)), "0,0 keeps its node corner 8,4 and gives 9,4 to 1,0")
+	_expect(neighbour.corners_drawn.has(Vector2i(9, 4)) and not neighbour.corners_drawn.has(Vector2i(8, 4)), "1,0 draws corner 9,4 only")
 	var drop := InterestUpdate.new()
 	drop.remove.append(InterestId.new(0, 0))
 	_emit(ServerEvent.with_interest_update(drop))
 	_expect(_summary_visible(near) == 1 and _mesh(near, "Roads") == null, "unsubscribed block collapses to the summary")
 	_expect(near.brownout_count == 0, "brownout count cleared with the detail")
 	_expect(neighbour.segments_drawn.has(seam_key), "1,0 draws the seam segment once 0,0 is gone")
-	_expect(neighbour.corners_drawn.has(Vector2i(8, 3)) and neighbour.corners_drawn.has(Vector2i(8, 4)), "1,0 draws the seam junctions once 0,0 is gone")
+	_expect(neighbour.corners_drawn.has(Vector2i(8, 4)) and neighbour.corners_drawn.has(Vector2i(9, 4)), "1,0 draws both seam corners once 0,0 is gone")
 
-	# Neighbour seam refresh: 0,0 and 0,1 subscribed; an edge inside 0,1 that reaches the corner
-	# 8,8 (owned by 0,0 through tile 7,7) must make 0,0 draw that junction although only 0,1 and
-	# 1,1 were dirty.
+	# Neighbour seam refresh: 0,0 and 0,1 subscribed, a building on tile 4,8 (block 0,1). The edge
+	# 3,7-4,7 inside 0,0 is the street on line y=8 along the north side of tile 4,8: that tile's
+	# front and pad change, so 0,1 must regenerate although only 0,0 was dirty; the junctions at
+	# 4,8 and 5,8 are 0,0's (nodes of its tiles 3,7 and 4,7).
 	var reopen := InterestUpdate.new()
 	reopen.add.append(InterestId.new(0, 0))
 	reopen.add.append(InterestId.new(0, 1))
 	_emit(ServerEvent.with_interest_update(reopen))
 	var south := view.block_view("0,1")
-	var builds_before := near.geometry_builds
-	var south_edge := WorldState.ordered_edge(Vector2i(7, 8), Vector2i(8, 8))
-	_emit(ServerEvent.with_edge_delta(south_edge))
-	_expect(near.geometry_builds == builds_before + 1, "block 0,0 refreshed its seam for an edge in 0,1 (builds %d -> %d)" % [builds_before, near.geometry_builds])
-	_expect(near.corners_drawn.has(Vector2i(8, 8)), "block 0,0 draws the junction at 8,8")
-	_expect(not south.corners_drawn.has(Vector2i(8, 8)) and south.corners_drawn.has(Vector2i(8, 9)), "block 0,1 draws only its own corner 8,9")
-	var builds_idle := near.geometry_builds
-	var far_edge := WorldState.ordered_edge(Vector2i(2, 12), Vector2i(3, 12))
+	var fronting := TileDelta.from_cell(4, 8)
+	fronting.owner = SliceConstants.Owner.FACTION_A
+	fronting.zone = SliceConstants.Zone.R
+	fronting.has_building = true
+	_emit(ServerEvent.with_tile_delta(fronting))
+	var builds_before := south.geometry_builds
+	var seam_street := WorldState.ordered_edge(Vector2i(3, 7), Vector2i(4, 7))
+	_emit(ServerEvent.with_edge_delta(seam_street))
+	_expect(south.geometry_builds == builds_before + 1, "block 0,1 refreshed for a street along its north edge (builds %d -> %d)" % [builds_before, south.geometry_builds])
+	_expect(int(south.stats.get("generated", 0)) == 1, "tile 4,8 regenerated its building to face the new street (generated %s)" % str(south.stats.get("generated")))
+	_expect(near.corners_drawn.has(Vector2i(4, 8)) and near.corners_drawn.has(Vector2i(5, 8)), "block 0,0 draws the junctions of its own nodes 4,8 and 5,8")
+	_expect(not south.corners_drawn.has(Vector2i(4, 8)) and not south.corners_drawn.has(Vector2i(5, 8)), "block 0,1 does not duplicate them")
+	var builds_idle := south.geometry_builds
+	var far_edge := WorldState.ordered_edge(Vector2i(1, 1), Vector2i(1, 2))
 	_emit(ServerEvent.with_edge_delta(far_edge))
-	_expect(near.geometry_builds == builds_idle, "an edge away from the seam does not regenerate block 0,0")
+	_expect(south.geometry_builds == builds_idle, "an edge away from the seam does not regenerate block 0,1")
 
 	# All zones and tiers, rebuild budgets.
 	_check_dense_block()
@@ -258,13 +356,17 @@ func _check_dense_block() -> void:
 	_expect(int(dense.stats.get("badges", 0)) == 64, "every building carries a roof badge")
 	_expect(int(dense.stats.get("borders", 0)) > 0, "A / B frontier draws territory borders")
 	_expect(int(dense.stats.get("trees", 0)) > 0 and int(dense.stats.get("lamps", 0)) > 0, "props placed (trees %s lamps %s)" % [str(dense.stats.get("trees")), str(dense.stats.get("lamps"))])
-	var mesh: ArrayMesh = _mesh(dense, "Lots")
 	var tris := 0
-	if mesh != null:
+	var surfaces := 0
+	for layer in ["Lots0", "Lots1"]:
+		var mesh: ArrayMesh = _mesh(dense, layer)
+		if mesh == null:
+			continue
+		surfaces += mesh.get_surface_count()
 		for s in mesh.get_surface_count():
 			tris += mesh.surface_get_array_len(s) / 3
-	print("VIEW_PERF dense block cold: 64 buildings generated + merged + roads + overlay + props in %.1f ms (block build %.1f ms), building mesh surfaces=%d tris=%d" % [
-		cold_ms, dense.last_build_ms, mesh.get_surface_count() if mesh != null else 0, tris])
+	print("VIEW_PERF dense block cold: 64 buildings generated + merged + roads + overlay + props in %.1f ms (block build %.1f ms), lot mesh surfaces=%d tris=%d" % [
+		cold_ms, dense.last_build_ms, surfaces, tris])
 
 	# One tile changes tier: one building regenerated, the rest merged from the cache.
 	var best := INF
@@ -344,8 +446,23 @@ func _mesh(block: BlockView, layer: String) -> ArrayMesh:
 	return (node as MeshInstance3D).mesh as ArrayMesh
 
 
+## Wire round trip, then the per-frame rebuild pass the view would otherwise run deferred, so
+## every assertion below sees the rebuilt state synchronously.
 func _emit(event: ServerEvent) -> void:
+	_emit_raw(event)
+	view.flush_dirty()
+
+
+func _emit_raw(event: ServerEvent) -> void:
 	GameNet.event_received.emit(ServerEvent.from_dict(event.to_dict()))
+
+
+func _stress_buildings() -> int:
+	var n := 0
+	for by in range(1, 4):
+		for bx in range(1, 4):
+			n += int(view.block_view("%d,%d" % [bx, by]).stats.get("buildings", 0))
+	return n
 
 
 func _expect(ok: bool, what: String) -> void:

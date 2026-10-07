@@ -29,6 +29,7 @@ const HOVER_Y := 0.45
 const HOVER_BAR := 1.2
 const PULSE_HZ := 0.35
 const PERF_EVERY := 60
+const DRAW_BURST := 8
 
 var session: ClientSession = null
 ## Milliseconds spent in the last _on_updated and the worst one so far.
@@ -45,8 +46,10 @@ var _hover_material: ShaderMaterial
 var _hover_lin: Dictionary = {}
 var _flicker_on := true
 var _flicker_left := FLICKER_SEC
+var _flush_pending := false
 var _perf_enabled := false
 var _frame := 0
+var _frame_accum := 0.0
 
 
 func _ready() -> void:
@@ -61,6 +64,10 @@ func _ready() -> void:
 			add_child(view)
 	_build_hover()
 	_perf_enabled = OS.get_cmdline_user_args().has("--view-perf") or OS.get_environment("GAMECITY_VIEW_PERF") == "1"
+	if _perf_enabled and DisplayServer.get_name() != "headless":
+		# perf probes run unthrottled so frame_ms is the render cost, not the display refresh
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+		Engine.max_fps = 0
 
 
 func bind(p_session: ClientSession) -> void:
@@ -104,7 +111,22 @@ func detailed_block_count() -> int:
 	return n
 
 
+## The session emits `updated` once per event; a subscription burst delivers a whole block as
+## 64 tile events in one network poll. Rebuilds are therefore coalesced: the dirty set keeps
+## accumulating in the session and is pulled once, at the end of the frame (before it renders).
 func _on_updated() -> void:
+	if _flush_pending:
+		return
+	_flush_pending = true
+	flush_dirty.call_deferred()
+
+
+## Rebuild every block the session marked dirty since the last pull. Called deferred after an
+## update; the headless view check calls it directly after each event it feeds.
+func flush_dirty() -> void:
+	_flush_pending = false
+	if session == null:
+		return
 	var dirty := session.take_dirty_blocks()
 	if dirty.is_empty():
 		return
@@ -128,19 +150,19 @@ func _rebuild_keys(keys: Array) -> void:
 		var view: BlockView = _blocks[key]
 		view.build()
 		view.set_flicker(_flicker_on)
-	# seam ring: a neighbour that was not dirty may still draw a junction or border this change moved
+	# seam ring: a neighbour (orthogonal or diagonal) that was not dirty may still draw a
+	# junction, a lot pad corner or a border this change moved
 	for key in seam_changed:
 		var view: BlockView = _blocks[key]
-		for step in BlockView.ORTHOGONAL:
-			var nx := view.block.block_x + step.x
-			var ny := view.block.block_y + step.y
-			var nkey := "%d,%d" % [nx, ny]
-			if set.has(nkey) or not _blocks.has(nkey):
-				continue
-			var nb: BlockView = _blocks[nkey]
-			if nb.subscribed:
-				nb.build()
-				nb.set_flicker(_flicker_on)
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var nkey := "%d,%d" % [view.block.block_x + dx, view.block.block_y + dy]
+				if (dx == 0 and dy == 0) or set.has(nkey) or not _blocks.has(nkey):
+					continue
+				var nb: BlockView = _blocks[nkey]
+				if nb.subscribed:
+					nb.build()
+					nb.set_flicker(_flicker_on)
 	last_dirty_count = keys.size()
 	last_update_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	max_update_ms = maxf(max_update_ms, last_update_ms)
@@ -149,8 +171,11 @@ func _rebuild_keys(keys: Array) -> void:
 func _process(delta: float) -> void:
 	_mats.set_pulse_phase(fmod(Time.get_ticks_msec() / 1000.0 * PULSE_HZ, 1.0))
 	_frame += 1
+	_frame_accum += delta
 	if _perf_enabled and _frame % PERF_EVERY == 0:
-		_print_perf()
+		# after this frame's process step, before its draw: a burst of back-to-back draws with the
+		# GPU queue drained measures the render cost independently of the display refresh
+		_print_perf.call_deferred()
 	_flicker_left -= delta
 	if _flicker_left > 0.0:
 		return
@@ -163,6 +188,21 @@ func _process(delta: float) -> void:
 			view.set_flicker(_flicker_on)
 
 
+## Render cost per frame in milliseconds: DRAW_BURST back-to-back draws with the GPU queue
+## drained before and after (the showcase bench method; vsync and the display refresh do not
+## apply, the single readback at the end is included and rounds the figure up).
+func _measure_draw_ms() -> float:
+	if DisplayServer.get_name() == "headless":
+		return 0.0
+	RenderingServer.force_sync()
+	var t0 := Time.get_ticks_usec()
+	for i in DRAW_BURST:
+		RenderingServer.force_draw(false, 0.0)
+	RenderingServer.force_sync()
+	var _drain := get_viewport().get_texture().get_image()
+	return float(Time.get_ticks_usec() - t0) / 1000.0 / float(DRAW_BURST)
+
+
 func _print_perf() -> void:
 	var worst := 0.0
 	var buildings := 0
@@ -170,8 +210,13 @@ func _print_perf() -> void:
 		var view: BlockView = _blocks[key]
 		worst = maxf(worst, view.last_build_ms)
 		buildings += int(view.stats.get("buildings", 0))
-	print("VIEW_PERF frame=%d proc_ms=%.2f fps=%.1f vram_mb=%.0f draw_calls=%d prims=%d objects=%d blocks=%d buildings=%d last_update_ms=%.2f max_update_ms=%.2f worst_block_ms=%.2f" % [
+	var frame_ms := _frame_accum * 1000.0 / PERF_EVERY
+	_frame_accum = 0.0
+	var draw_ms := _measure_draw_ms()
+	print("VIEW_PERF frame=%d draw_ms=%.2f frame_ms=%.2f proc_ms=%.2f fps=%.1f vram_mb=%.0f draw_calls=%d prims=%d objects=%d blocks=%d buildings=%d last_update_ms=%.2f max_update_ms=%.2f worst_block_ms=%.2f" % [
 		_frame,
+		draw_ms,
+		frame_ms,
 		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
 		Performance.get_monitor(Performance.TIME_FPS),
 		Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,

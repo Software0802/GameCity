@@ -13,7 +13,7 @@ extends Node3D
 ## replaced on rebuild (nodes are reused):
 ##   Roads      carriageways, sidewalks, curbs                  no shadows
 ##   Pads       raised lot pads (grass / paving / gravel)       no shadows
-##   Lots       buildings and lot props (fences, hedges ...)    shadows
+##   Lots0/1    buildings and lot props, north / south half     shadows
 ##   Street     lamp posts along the roads                      shadows
 ##   Overlay    palette overlay (unshaded, transparent)
 ##   Brownout   brownout power fill, toggled by WorldView's flicker
@@ -80,7 +80,8 @@ var _subs: Dictionary = {}
 var _detail_built := false
 var _roads: MeshInstance3D
 var _pads: MeshInstance3D
-var _lots: MeshInstance3D
+## Two halves (tile rows 0-3 and 4-7) so a one-tile change re-merges half the block.
+var _lots: Array = [null, null]
 var _street: MeshInstance3D
 var _overlay: MeshInstance3D
 var _brownout: MeshInstance3D
@@ -89,7 +90,7 @@ var _mmi: Dictionary = {}
 var _tile_cache: Array = []
 var _sig_roads := ""
 var _sig_pads := ""
-var _sig_lots := ""
+var _sig_lots: Array = ["", ""]
 var _sig_overlay := ""
 var _sig_street := ""
 var _road_runs: Array = []
@@ -204,7 +205,7 @@ func reset_geometry() -> void:
 	_run_cache.clear()
 	_sig_roads = ""
 	_sig_pads = ""
-	_sig_lots = ""
+	_sig_lots = ["", ""]
 	_sig_overlay = ""
 	_sig_street = ""
 
@@ -212,8 +213,8 @@ func reset_geometry() -> void:
 func _show_summary() -> void:
 	brownout_count = 0
 	if _detail_built:
-		var changed := _sig_roads != "" or _sig_pads != "" or _sig_lots != "" or _sig_overlay != "" or _sig_street != ""
-		for node in [_roads, _pads, _lots, _street, _overlay, _brownout]:
+		var changed: bool = _sig_roads != "" or _sig_pads != "" or _sig_lots[0] != "" or _sig_lots[1] != "" or _sig_overlay != "" or _sig_street != ""
+		for node in [_roads, _pads, _lots[0], _lots[1], _street, _overlay, _brownout]:
 			node.mesh = null
 		for mname in _mmi:
 			_mmi[mname].multimesh.instance_count = 0
@@ -254,7 +255,7 @@ func _ensure_detail() -> void:
 	_detail_built = true
 	_roads = _make_layer("Roads", false)
 	_pads = _make_layer("Pads", false)
-	_lots = _make_layer("Lots", true)
+	_lots = [_make_layer("Lots0", true), _make_layer("Lots1", true)]
 	_street = _make_layer("Street", true)
 	_overlay = _make_layer("Overlay", false)
 	_brownout = _make_layer("Brownout", false)
@@ -344,9 +345,14 @@ func _build_detail() -> void:
 		states.append(str(roundi(window_state(t) * 100.0)))
 	var sig_roads := _roads_signature(data)
 	var sig_pads := ",".join(pad_keys)
-	var sig_lots := ",".join(lot_keys) + "#" + ",".join(states)
+	var half := TILE_COUNT / 2
+	var sig_lots := [
+		",".join(lot_keys.slice(0, half)) + "#" + ",".join(states.slice(0, half)),
+		",".join(lot_keys.slice(half)) + "#" + ",".join(states.slice(half)),
+	]
 	var sig_overlay := _overlay_signature(data, lot_keys)
 	stats["ms_sig"] = (Time.get_ticks_usec() - t0) / 1000.0
+	stats["generated"] = 0
 	var changed := false
 	var instances_dirty := false
 	if sig_roads != _sig_roads:
@@ -361,11 +367,16 @@ func _build_detail() -> void:
 		stats["ms_pads"] = (Time.get_ticks_usec() - t0) / 1000.0
 		_sig_pads = sig_pads
 		changed = true
-	if sig_lots != _sig_lots:
-		t0 = Time.get_ticks_usec()
-		_build_lots(data, lot_keys)
+	var lots_dirty := false
+	t0 = Time.get_ticks_usec()
+	for h in 2:
+		if sig_lots[h] != _sig_lots[h]:
+			_build_lots_half(data, lot_keys, h)
+			_sig_lots[h] = sig_lots[h]
+			lots_dirty = true
+	if lots_dirty:
+		_collect_lots()
 		stats["ms_lots"] = (Time.get_ticks_usec() - t0) / 1000.0
-		_sig_lots = sig_lots
 		changed = true
 		instances_dirty = true
 	if sig_overlay != _sig_overlay:
@@ -396,16 +407,24 @@ func _make_data() -> Data:
 	data.subscribed = _subs
 	for key in edges:
 		data.edges[key] = edges[key]
+	# edges of all eight neighbours inside the window (seam junctions, lot pads at the boundary)
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var nb: BlockView = _blocks.get("%d,%d" % [block.block_x + dx, block.block_y + dy])
+			if nb == null or nb.tiles.is_empty():
+				continue
+			for key in nb.edges:
+				var e: EdgeDelta = nb.edges[key]
+				if data.near_block(e.a) and data.near_block(e.b):
+					data.edges[key] = e
 	for step in ORTHOGONAL:
 		var nx := block.block_x + step.x
 		var ny := block.block_y + step.y
 		var nb: BlockView = _blocks.get("%d,%d" % [nx, ny])
 		if nb == null or nb.tiles.is_empty():
 			continue
-		for key in nb.edges:
-			var e: EdgeDelta = nb.edges[key]
-			if _touches_window(data, e.a) and _touches_window(data, e.b):
-				data.edges[key] = e
 		# the neighbour's row or column that borders this block
 		for k in BLOCK:
 			var t: TileDelta
@@ -420,10 +439,6 @@ func _make_data() -> Data:
 			data.ring[t.id] = t
 	data.index_edges()
 	return data
-
-
-static func _touches_window(data: Data, p: Vector2i) -> bool:
-	return p.x >= data.x0 - 1 and p.y >= data.y0 - 1 and p.x <= data.x0 + BLOCK and p.y <= data.y0 + BLOCK
 
 
 ## Everything the building and the lot props of a tile depend on.
@@ -513,17 +528,15 @@ func _build_pads(pad_keys: PackedStringArray, road_masks: PackedInt32Array, free
 	_commit(merged, _pads, PAD_KEYS)
 
 
-## Buildings and lot props: per-tile cache keyed by _lot_key, merged into one mesh.
-func _build_lots(data: Data, lot_keys: PackedStringArray) -> void:
+## Buildings and lot props of one half of the block (tile rows 0-3 or 4-7): per-tile cache keyed
+## by _lot_key, merged into that half's mesh.
+func _build_lots_half(data: Data, lot_keys: PackedStringArray, half: int) -> void:
 	var builder = Buildings.new(data)
 	var props = Props.new()
 	var merged := {}
-	var kinds := {}
-	var count := 0
 	var generated := 0
-	_infos = {}
-	_lot_inst = Props.empty_instances()
-	for idx in TILE_COUNT:
+	var first := half * (TILE_COUNT / 2)
+	for idx in range(first, first + TILE_COUNT / 2):
 		var t: TileDelta = tiles[idx]
 		var key := lot_keys[idx]
 		var entry = _tile_cache[idx]
@@ -543,11 +556,6 @@ func _build_lots(data: Data, lot_keys: PackedStringArray) -> void:
 			entry["inst"] = inst
 			entry["fac_alpha"] = -1.0
 			generated += 1
-		var info: Dictionary = entry["info"]
-		if not info.is_empty():
-			count += 1
-			_infos[t.id] = info
-			kinds[info["kind"]] = int(kinds.get(info["kind"], 0)) + 1
 		var alpha := window_state(t)
 		var batches: Dictionary = entry["batches"]
 		# facade colours with the window state alpha, cached until the state changes
@@ -569,15 +577,32 @@ func _build_lots(data: Data, lot_keys: PackedStringArray) -> void:
 				dst.append_with_colors(batches[k], fac_cols[k])
 			else:
 				dst.append(batches[k])
+	_commit(merged, _lots[half], [])
+	stats["generated"] = int(stats.get("generated", 0)) + generated
+
+
+## Building infos, kinds and lot tree instances over the whole tile cache (after the halves).
+func _collect_lots() -> void:
+	var kinds := {}
+	var count := 0
+	_infos = {}
+	_lot_inst = Props.empty_instances()
+	for idx in TILE_COUNT:
+		var entry = _tile_cache[idx]
+		if entry == null:
+			continue
+		var info: Dictionary = entry["info"]
+		if not info.is_empty():
+			count += 1
+			_infos[tiles[idx].id] = info
+			kinds[info["kind"]] = int(kinds.get(info["kind"], 0)) + 1
 		var inst: Dictionary = entry["inst"]
 		for v in Props.TREE_VARIANTS:
 			_lot_inst["trees"][v].append_array(inst["trees"][v])
 			_lot_inst["tree_cols"][v].append_array(inst["tree_cols"][v])
 		_lot_inst["bushes"].append_array(inst["bushes"])
 		_lot_inst["bush_cols"].append_array(inst["bush_cols"])
-	_commit(merged, _lots, [])
 	stats["buildings"] = count
-	stats["generated"] = generated
 	stats["kinds"] = kinds
 
 

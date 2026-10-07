@@ -179,14 +179,14 @@ func _congestion() -> void:
 	var pulse := b("ov_pulse")
 	var x0: int = D.x0
 	var y0: int = D.y0
-	for i in range(x0, x0 + D.BLOCK + 1):
-		for z in range(y0, y0 + D.BLOCK):
+	for i in range(x0 + 1, x0 + D.BLOCK + 1):
+		for z in range(y0, y0 + D.BLOCK + 1):
 			var e: EdgeDelta = D.edge_v(i, z)
 			if e == null or e.congestion < PULSE_MIN or not D.owns_segment_v(i, z):
 				continue
 			_pulse(Cfg.corner(i, z), Cfg.corner(i, z + 1), true, e.congestion, pulse)
-	for j in range(y0, y0 + D.BLOCK + 1):
-		for x in range(x0, x0 + D.BLOCK):
+	for j in range(y0 + 1, y0 + D.BLOCK + 1):
+		for x in range(x0, x0 + D.BLOCK + 1):
 			var e: EdgeDelta = D.edge_h(x, j)
 			if e == null or e.congestion < PULSE_MIN or not D.owns_segment_h(x, j):
 				continue

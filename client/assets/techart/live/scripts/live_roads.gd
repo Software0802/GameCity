@@ -57,28 +57,31 @@ func build() -> void:
 
 
 # ---------------------------------------------------------------- runs (segments)
-## Chains of owned segments through straight corners, per border line.
+## Chains of owned segments through straight corners, per border line. A segment this block owns
+## belongs to a game edge with an endpoint in the block, so it lies on lines x0+1 .. x0+BLOCK
+## and rows y0 .. y0+BLOCK (the node of a tile is its south-east corner).
 func _runs() -> void:
 	var x0: int = D.x0
 	var y0: int = D.y0
-	# vertical lines x = i: segments at rows z; owned ones have z inside the block
-	for i in range(x0, x0 + D.BLOCK + 1):
+	var z_end: int = y0 + D.BLOCK + 1
+	var x_end: int = x0 + D.BLOCK + 1
+	for i in range(x0 + 1, x0 + D.BLOCK + 1):
 		var z := y0
-		while z < y0 + D.BLOCK:
+		while z < z_end:
 			if D.road_v(i, z) and D.owns_segment_v(i, z):
 				var ze := z
-				while ze + 1 < y0 + D.BLOCK and D.straight(i, ze + 1) and D.road_v(i, ze + 1) and D.owns_segment_v(i, ze + 1):
+				while ze + 1 < z_end and D.straight(i, ze + 1) and D.road_v(i, ze + 1) and D.owns_segment_v(i, ze + 1):
 					ze += 1
 				_emit_run(i, z, ze, true)
 				z = ze + 1
 			else:
 				z += 1
-	for j in range(y0, y0 + D.BLOCK + 1):
+	for j in range(y0 + 1, y0 + D.BLOCK + 1):
 		var x := x0
-		while x < x0 + D.BLOCK:
+		while x < x_end:
 			if D.road_h(x, j) and D.owns_segment_h(x, j):
 				var xe := x
-				while xe + 1 < x0 + D.BLOCK and D.straight(xe + 1, j) and D.road_h(xe + 1, j) and D.owns_segment_h(xe + 1, j):
+				while xe + 1 < x_end and D.straight(xe + 1, j) and D.road_h(xe + 1, j) and D.owns_segment_h(xe + 1, j):
 					xe += 1
 				_emit_run(j, x, xe, false)
 				x = xe + 1
@@ -114,9 +117,9 @@ func _emit_run(line: int, s0: int, s1: int, vertical: bool) -> void:
 	runs.append({"vertical": vertical, "line": line, "a0": a0, "a1": a1, "cross": cross, "s0": s0, "s1": s1})
 	for s in range(s0, s1 + 1):
 		if vertical:
-			segments_drawn.append(D.edge_key(line - 1, s, line, s))
+			segments_drawn.append(D.edge_key(line - 1, s - 1, line - 1, s))
 		else:
-			segments_drawn.append(D.edge_key(s, line - 1, s, line))
+			segments_drawn.append(D.edge_key(s - 1, line - 1, s, line - 1))
 	if vertical:
 		var xc := cross
 		# t = -(x - xc): right-hand side for +z travel
@@ -152,8 +155,10 @@ func _emit_run(line: int, s0: int, s1: int, vertical: bool) -> void:
 # ---------------------------------------------------------------- junctions
 func _junctions() -> void:
 	var kept := {}
-	for j in range(D.y0, D.y0 + D.BLOCK + 1):
-		for i in range(D.x0, D.x0 + D.BLOCK + 1):
+	# corners this block can own: its tiles' nodes, fallbacks on the west / north boundary,
+	# and the far end of an owned segment one line beyond the block
+	for j in range(D.y0, D.y0 + D.BLOCK + 2):
+		for i in range(D.x0, D.x0 + D.BLOCK + 2):
 			var arms: int = D.junction_arms(i, j)
 			if arms == 0 or arms == 5 or arms == 10:
 				continue

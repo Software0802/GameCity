@@ -1,0 +1,8 @@
+# Default-zoom frame-time probe and far shot of the stub city: camera only (works at any
+# --resolution). CameraRig.SIZE_DEFAULT is 1200 m (40 tiles tall).
+#   godot --path . --resolution 1920x1080 -- --stub --input-script client/dev/scripts/live_far.txt \
+#     --screenshot /tmp/gamecity_far.png --screenshot-frames 200 --view-perf
+wait 20
+focus 10 10
+zoom 1200
+wait 60
