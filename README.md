@@ -1,8 +1,8 @@
 # GameCity
 
-双阵营轻对抗城市建设。Godot 4 垂直切片骨架（还不能玩）。
+双阵营轻对抗城市建设。Godot 4 垂直切片：listen-host 已能收发指令，画面仍是骨架。
 
-Two-faction light-versus city builder. Godot 4 vertical-slice skeleton (not playable yet).
+Two-faction light-versus city builder. Godot 4 vertical slice: listen-host commands work; the view is still a skeleton.
 
 ## 这是什么 / What this is
 
@@ -11,9 +11,9 @@ Two-faction light-versus city builder. Godot 4 vertical-slice skeleton (not play
 - 服务器权威模拟。垂直切片允许 listen-host，主机跑同一套模拟。
 - 地图 64×64 格，兴趣区 8×8，道路只走正交四邻。市政服务只有电，切片不做水。
 
-当前仓库只有工程骨架和已归档的设计 brief。没有完整玩法、联网实现或美术资源。
+权威模拟在 `server/world_state.gd`。ENet 会话在 autoload `GameNet`（`server/net_authority.gd`）。客户端只提交意图；拒绝时丢掉乐观操作。
 
-This repository is a project skeleton plus archived design briefs. Full gameplay, netcode, and art assets are not in tree.
+The authoritative sim is `server/world_state.gd`. The ENet session is the `GameNet` autoload (`server/net_authority.gd`). Clients submit intents and drop optimistic edits on Reject.
 
 ## 用 Godot 4 打开 / Open in Godot 4
 
@@ -23,11 +23,28 @@ One Godot project at the repo root. `shared/`, `server/`, and `client/` belong t
 
 1. 安装 Godot 4.3 或更新版本（本工程标记为 GL Compatibility）。
 2. 项目管理器 → Import → 选中本仓库根目录的 `project.godot`。
-3. 默认主场景是 `res://client/main.tscn`：正交相机（相对竖直偏约 25°）、一块地面占位、左上角文字 “GameCity skeleton”。
-4. 无头服务器入口（只会打印 `MatchStart`，规则尚未实现）：
+3. 默认主场景是 `res://client/main.tscn`：正交相机（相对竖直偏约 25°）、一块地面占位、左上角对局状态。
+4. 默认 ENet 端口 **24567**（可用 `--port` 覆盖）。主机在大厅等到第二名玩家才 `MatchStart`。主机掉线直接 `MatchEnd`，不迁移主机。
 
 ```bash
-godot --headless --path . res://server/main.tscn
+# 本机 listen-host（带相机）。H 键等价于 --listen，J 键加入 127.0.0.1。
+godot --path . -- --listen
+godot --path . -- --join 127.0.0.1 --port 24567
+
+# 无头 listen-host（同一套模拟，没有相机）
+godot --headless --path . res://server/main.tscn -- --port 24567
+```
+
+光标方向键移动。Enter `ClaimTile`，Z `SetZone R`，E 向右加边，P `PlacePower`，Backspace `DemolishOwn`。
+
+出生地是示例坐标，不是锁定玩法：阵营 A 为 `[0,8) × [0,8)`，阵营 B 为 `[56,64) × [56,64)`。
+
+无头自检：
+
+```bash
+godot --headless --path . -s res://server/permission_check.gd
+godot --headless --path . res://server/main.tscn -- --port 24671 --smoke-host
+godot --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --port 24671
 ```
 
 ## 目录 / Layout

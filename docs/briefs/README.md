@@ -1,6 +1,6 @@
 # 垂直切片 Brief 索引
 
-本目录归档 GameCity 垂直切片的锁定设计。实现以这些文档为准。当前仓库只提供 Godot 4 骨架和类型占位，不实现完整玩法、协议或美术。
+本目录归档 GameCity 垂直切片的锁定设计。实现以这些文档为准。仓库已接 listen-host 指令权限；完整模拟公式和美术仍未做。
 
 These files archive the locked vertical-slice design. The repo skeleton does not implement them yet.
 

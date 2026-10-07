@@ -77,12 +77,12 @@ edge {
 | `RemovePower` | 同上 | `Reject` |
 | `DemolishOwn` | `TileDelta`（清己方建筑） | `Reject` |
 
-原因码（骨架枚举，规则未执行）：
+原因码（枚举仍在 `shared/reason_codes.gd`。进行中的对局由 `server/world_state.gd` 判断，不再回 `NOT_IMPLEMENTED`）：
 
 | 码 | 何时 |
 | --- | --- |
 | `OK` | 已接受 |
-| `NOT_IMPLEMENTED` | 骨架默认：指令形状可识别，但规则还没写 |
+| `NOT_IMPLEMENTED` | 枚举保留。进行中的对局不再用它代替权限判断 |
 | `UNKNOWN_COMMAND` | 不认识的指令 |
 | `MATCH_NOT_ACTIVE` | 不在对局进行中 |
 | `OUT_OF_BOUNDS` | 坐标超出 64×64 |
