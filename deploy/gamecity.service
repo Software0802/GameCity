@@ -1,0 +1,30 @@
+# /etc/systemd/system/gamecity.service — GameCity dedicated server (docs/ops/deploy.md).
+# Runtime values come from /opt/gamecity/.env (deploy/gamecity.env.example).
+# Per-release and per-account overrides are drop-ins in gamecity.service.d/.
+# Do not touch /opt/genius or its unit: that is the other service on this host.
+
+[Unit]
+Description=GameCity dedicated server
+Documentation=file:/opt/gamecity/current/docs/ops/deploy.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gamecity
+Group=gamecity
+WorkingDirectory=/opt/gamecity
+EnvironmentFile=/opt/gamecity/.env
+ExecStart=/opt/gamecity/godot --headless --path /opt/gamecity/current res://server/main.tscn -- --port ${GAMECITY_PORT} --pace ${GAMECITY_PACE} --round-seconds ${GAMECITY_ROUND_SECONDS} --save-interval ${GAMECITY_SAVE_INTERVAL} --save-dir /opt/gamecity/data --status-file /opt/gamecity/data/status.json
+Restart=on-failure
+RestartSec=3
+# SIGTERM makes the server write a snapshot before it exits; give it time.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Starting point; tune after measuring on the box.
+MemoryMax=400M
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

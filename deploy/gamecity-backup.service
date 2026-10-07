@@ -1,0 +1,12 @@
+# /etc/systemd/system/gamecity-backup.service — one backup of /opt/gamecity/data (deploy/backup.sh).
+# Triggered by gamecity-backup.timer; run by hand with `systemctl start gamecity-backup`.
+[Unit]
+Description=GameCity data backup
+After=gamecity.service
+
+[Service]
+Type=oneshot
+User=gamecity
+Group=gamecity
+Environment=GAMECITY_REMOTE_ROOT=/opt/gamecity
+ExecStart=/opt/gamecity/current/deploy/backup.sh

@@ -557,9 +557,14 @@ if [ $ready -eq 1 ]; then
 	tick_after=$(json_int "$STATUS" tick)
 	ends_after=$(json_int "$STATUS" round_ends_at_unix)
 	log "after restart: tick=$tick_after round_ends_at_unix=$ends_after pid=$(json_int "$STATUS" pid)"
+	sleep 2.5
+	tick_later=$(json_int "$STATUS" tick)
+	log "2.5s later: tick=$tick_later"
 	if [ -z "$fail5" ]; then
 		if [ -z "$tick_after" ] || [ "$tick_after" -lt "${tick_before:-0}" ] || [ "$tick_after" -le 0 ]; then
 			fail5="status.json tick reset: before=$tick_before after=$tick_after (save-on-SIGTERM or restore missing, server-core)"
+		elif [ -z "$tick_later" ] || [ "$tick_later" -le "$tick_after" ]; then
+			fail5="status.json tick stuck at $tick_after after restart: restored server is not ticking (server-core)"
 		elif [ "$ends_after" != "$ends_before" ]; then
 			fail5="round_ends_at_unix changed across restart: $ends_before -> $ends_after (a stop must not extend the round)"
 		else

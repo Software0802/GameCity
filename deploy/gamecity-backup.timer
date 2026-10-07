@@ -1,0 +1,11 @@
+# /etc/systemd/system/gamecity-backup.timer — daily at 03:47, away from the other service's 03:17.
+[Unit]
+Description=Daily GameCity data backup
+
+[Timer]
+OnCalendar=*-*-* 03:47:00
+Persistent=true
+RandomizedDelaySec=0
+
+[Install]
+WantedBy=timers.target
