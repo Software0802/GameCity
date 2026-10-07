@@ -66,7 +66,7 @@
 {
   "version": SAVE_FORMAT_VERSION,
   "saved_at_unix": int,
-  "round": {"started_at_unix": int, "ends_at_unix": int, "pace": float, "phase": "play" | "ended", "crisis_fired": bool},
+  "round": {"started_at_unix": int, "ends_at_unix": int, "pace": float, "phase": "play" | "ended", "crisis_fired": bool, "tick": int},
   "players": [{"player_id": int, "token_sha256": String, "name": String, "faction": int, "last_seen_unix": int}],
   "world": WorldState.to_save_dict()
 }

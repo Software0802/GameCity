@@ -9,18 +9,19 @@
   godot                     # 官方 Linux 二进制（按 uname -m 选 x86_64 或 arm64），与本地同版本 4.7.2
   releases/<sha>-<ts>/      # 每次发布一份，保留 3 份
   current -> releases/...   # 原子切换（mv -T）
-  data/                     # 存档目录：world-*.json 快照、players.json、status.json
+  data/                     # 存档目录：world-<UTC时间戳>.json 快照（信封内含玩家表，没有单独的 players.json）、status.json、stop（停机信号文件）
   backups/                  # backup.sh 产物，保留 14 份，权限 600
   .env                      # 端口、pace、round-seconds 等，640
 ```
 
 - 专用系统账号 `gamecity`，整树归 `gamecity:gamecity`。
 - systemd `gamecity.service`：`ExecStart=/opt/gamecity/godot --headless --path /opt/gamecity/current res://server/main.tscn -- --port 24567 --save-dir /opt/gamecity/data --status-file /opt/gamecity/data/status.json`，`Restart=on-failure`，`MemoryMax` 先设 400 MiB，上线后按实测调。
+- **停机走 stop 文件，不靠 SIGTERM**：无头 Godot 收到 SIGTERM 会直接死掉、不执行任何保存。`ExecStop=` 先 `touch /opt/gamecity/data/stop`，服务器存档后自行退出 0；`TimeoutStopSec=30`，超时才由 systemd 兜底杀进程。定时存档（默认 30 秒）是最后的保险。
 - ENet 走 **UDP 24567**，安全组要放行 UDP，不是 TCP。
 
 ## 健康检查
 
-服务器每秒把 `{tick, players, round_ends_at_unix, saved_at_unix, pid}` 写到 `status.json`。健康 = 文件 mtime 距今 ≤ 5 秒且 `tick` 在增长。部署脚本轮询这个文件，不健康就回滚到上一个 release 并重启。
+服务器每秒把 `{tick, players, players_known, round_ends_at_unix, saved_at_unix, pid, phase}` 写到 `status.json`（`players` 是在线已握手数，`players_known` 是玩家表总数）。健康 = 文件 mtime 距今 ≤ 5 秒且 `tick` 在增长。部署脚本轮询这个文件，不健康就回滚到上一个 release 并重启。
 
 ## 发布流程（`deploy/deploy.sh`）
 
