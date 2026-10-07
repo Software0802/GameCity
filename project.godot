@@ -19,6 +19,9 @@ window/stretch/mode="canvas_items"
 
 [rendering]
 
+; Headless smoke stays on GL Compatibility. Do not switch the project default
+; to Forward+. Preview the M1 interchange with a one-shot override:
+;   godot --path . --rendering-method forward_plus res://client/techart_sample.tscn
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 environment/defaults/default_clear_color=Color(0.184314, 0.227451, 0.203922, 1)

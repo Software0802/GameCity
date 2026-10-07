@@ -1,0 +1,10 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "mat_vehicle_dark"
+albedo_color = Color(0.12, 0.13, 0.15, 1)
+metallic = 0.65
+roughness = 0.28
+clearcoat_enabled = true
+clearcoat = 0.55
+clearcoat_roughness = 0.12
