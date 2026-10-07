@@ -162,6 +162,7 @@ func apply_preset(preset: String, shot: Dictionary, fx: Dictionary, tm := [1.0, 
 			al.set("area_normalize_energy", false)
 			al.light_color = d["color"]
 			al.light_energy = float(d["energy"]) * float(fx.get("area_energy", 0.22))
+			al.shadow_enabled = bool(fx.get("area_shadows", false))
 			al.visible = true
 		else:
 			al.visible = false

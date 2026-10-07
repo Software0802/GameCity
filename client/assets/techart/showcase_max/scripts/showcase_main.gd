@@ -38,6 +38,15 @@ var interactive_index := 0
 var _view_rect: TextureRect
 
 func _ready() -> void:
+	if DisplayServer.get_name() == "headless":
+		# no renderer: only build the district (data, meshes, materials) and report, so smoke runs stay meaningful
+		var holder := Node3D.new()
+		add_child(holder)
+		var w := World.new()
+		w.build(holder)
+		print("SHOWCASE_BUILD_OK tris=", w.stats.get("tris", 0), " ", w.data.summary())
+		get_tree().quit()
+		return
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	var prof := OS.get_environment("CITY_SHOWCASE_PROFILE")
@@ -232,12 +241,12 @@ func _run_bench() -> void:
 		# reference (before)
 		_bench_apply(shot_name, base_profile, {})
 		await _settle(settle)
-		var ref_a := await _measure_draw(40)
+		var ref_a := await _measure_draw(60)
 		# variant
 		_bench_apply(shot_name, base_profile, ov)
 		await _settle(settle)
 		var pm := await _measure(40)
-		var ms := await _measure_draw(40)
+		var ms := await _measure_draw(60)
 		var rec_vram := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0
 		var rec_calls := Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
 		var rec_prims := Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
@@ -250,10 +259,10 @@ func _run_bench() -> void:
 		# reference (after)
 		_bench_apply(shot_name, base_profile, {})
 		await _settle(settle)
-		var ref_b := await _measure_draw(40)
+		var ref_b := await _measure_draw(60)
 		var ref := (ref_a + ref_b) * 0.5
 		var row := {"group": group, "tag": tag, "shot": shot_name, "profile": base_profile, "fx": ov, "effective": eff,
-			"draw_ms": snappedf(ms, 0.01), "ref_ms": snappedf(ref, 0.01), "delta_ms": snappedf(ms - ref, 0.01),
+			"draw_ms": snappedf(ms, 0.01), "ref_ms": snappedf(ref, 0.01), "ref_a": snappedf(ref_a, 0.01), "ref_b": snappedf(ref_b, 0.01), "delta_ms": snappedf(ms - ref, 0.01),
 			"proc_ms": snappedf(pm["proc_ms"], 0.01), "wall_ms": snappedf(pm["wall_ms"], 0.01),
 			"vram_mb": snappedf(rec_vram, 0.1), "draw_calls": rec_calls, "prims": rec_prims}
 		if shot_img != null:
@@ -264,21 +273,28 @@ func _run_bench() -> void:
 			shot_img.save_png("%s/%s_%s.png" % [cmp_dir, group, tag])
 			row["image"] = "compare/%s_%s.png" % [group, tag]
 		results["%s/%s" % [group, tag]] = row
-		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " ref=", row["ref_ms"], " delta=", row["delta_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
+		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " ref=", row["ref_a"], "/", row["ref_b"], " delta=", row["delta_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
 		var wf := FileAccess.open(res_path, FileAccess.WRITE)
 		wf.store_string(JSON.stringify(results, "\t"))
 		wf.close()
 
 ## Throughput without the window's present cap: drive frames with force_draw and flush the GPU at the end.
 func _measure_draw(frames: int) -> float:
+	# Median of 5 chunks of frames/5 draws each, GPU queue drained between chunks: robust against the
+	# M4's clock transients (a plain mean moved by +-5 ms between identical runs).
 	await get_tree().process_frame
-	RenderingServer.force_sync()
-	var t0 := Time.get_ticks_usec()
-	for i in frames:
-		RenderingServer.force_draw(false, 0.0)
-	RenderingServer.force_sync()
-	var img := sv.get_texture().get_image()   # forces the GPU queue to drain
-	return float(Time.get_ticks_usec() - t0) / 1000.0 / float(frames)
+	var chunks: Array = []
+	var per := maxi(frames / 5, 4)
+	for c in 5:
+		RenderingServer.force_sync()
+		var t0 := Time.get_ticks_usec()
+		for i in per:
+			RenderingServer.force_draw(false, 0.0)
+		RenderingServer.force_sync()
+		var img := sv.get_texture().get_image()   # forces the GPU queue to drain
+		chunks.append(float(Time.get_ticks_usec() - t0) / 1000.0 / float(per))
+	chunks.sort()
+	return chunks[2]
 
 # ---------------------------------------------------------------- interactive
 func _interactive_setup() -> void:

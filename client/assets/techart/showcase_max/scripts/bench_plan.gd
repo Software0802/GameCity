@@ -70,6 +70,7 @@ static func entries() -> Array:
 		e.append(["lights", "omni_%d" % n, dusk, {"omni_budget": n}, ""])
 	e.append(["lights", "area_off", "s03_near_block_dusk", {"area_lights": false}, "full"])
 	e.append(["lights", "area_on", "s03_near_block_dusk", {"area_lights": true}, "full"])
+	e.append(["lights", "area_shadows_on", "s03_near_block_dusk", {"area_lights": true, "area_shadows": true}, "full"])
 	# --- all shots in both tiers
 	for sh in ["s01_hero_day", "s01_hero_dusk", "s02_far", "s03_near_block", "s00_cinematic_day", "s00_cinematic_dusk"]:
 		e.append(["shots", "shot_" + sh, sh, {}, ""])
