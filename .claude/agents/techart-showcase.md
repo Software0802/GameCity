@@ -62,6 +62,10 @@ M1 包 `client/assets/techart/roads_interchange/` 可以 preload 复用它的材
 
 每个镜头记录 1080p 下稳定后的帧时：`Performance.get_monitor(Performance.TIME_PROCESS)` 连续 60 帧平均。游戏相机镜头目标 ≤ 33 ms，电影镜头不限。超了就记录哪一项吃掉的，报告里给"交互档"和"截图档"两套设置。
 
+## 开窗次数上限
+
+基准测试没法 `--headless` 跑，每次开窗渲染都会在负责人的桌面上弹出窗口。规则：交付截图出完就停止一切开窗；逐项消融基准最多 12 个条目，超出的写进报告「未测」；任何需要重新渲染的事先在 hand-back 里请示，不要自己再开窗。
+
 ## 环境
 
 - `godot` 在 PATH 上（`/opt/homebrew/bin/godot`，4.7.2）。先 `godot --headless --path . --import`。
