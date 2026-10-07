@@ -1,14 +1,14 @@
 # GameCity
 
-双阵营轻对抗城市建设。Godot 4 垂直切片：listen-host 已能收发指令，画面仍是骨架。
+双阵营持久世界城市建设与对抗。Godot 4.7：专用无头服务器、令牌身份、存档恢复、7 天墙钟轮次、带经济与成长的城市期（M2）已可玩；画面为按块的纯色几何，程序化中等写实的接入在 M4。设计以 `docs/briefs/design-v2.md` 为准。
 
-Two-faction light-versus city builder. Godot 4 vertical slice: listen-host commands work; the view is still a skeleton.
+Two-faction persistent-world city builder. Godot 4.7: dedicated headless server, token identity, save/restore, 7-day wall-clock rounds, playable city phase (M2) with economy and growth; flat-colour block view, procedural mid-realism lands in M4. Design: `docs/briefs/design-v2.md`.
 
 ## 这是什么 / What this is
 
-- 2 个阵营，2–4 名玩家。一局约 30–45 分钟后结算。
-- 一局一城：对局数据只在内存里，不把城市存到下一局。
-- 服务器权威模拟。垂直切片允许 listen-host，主机跑同一套模拟。
+- 2 个阵营，2–4 名玩家。一轮 7 天（`--round-seconds` 可配），按墙钟计时，服务器停机不延长轮次。
+- 持久世界：专用无头服务器定期存档，重启后从存档恢复；玩家凭本地令牌随时下线重连。
+- 服务器权威模拟。客户端只提交意图，被拒即回滚乐观叠加。
 - 地图 128×128 格（`SliceConstants.MAP_SIZE`），兴趣区 8×8，道路只走正交四邻。市政服务只有电，切片不做水。
 
 权威模拟在 `server/world_state.gd`。ENet 会话在 autoload `GameNet`（`server/net_authority.gd`）。客户端只提交意图；拒绝时丢掉乐观操作。
@@ -30,7 +30,7 @@ One Godot project at the repo root. `shared/`, `server/`, and `client/` belong t
 # 专用无头服务器（唯一的服务器入口；参数见下表）
 godot --headless --path . res://server/main.tscn -- --port 24567 --save-dir user://saves
 
-# 客户端加入。listen-host（H 键 / --listen）已删除，GameNet.host() 只剩返回 ERR_UNAVAILABLE 的桩。
+# 客户端加入（listen-host 已删除；服务器只有 res://server/main.tscn 一个入口）。
 godot --path . -- --join 127.0.0.1 --port 24567 --name alice
 ```
 
@@ -52,7 +52,15 @@ godot --path . -- --join 127.0.0.1 --port 24567 --name alice
 
 存档是 `<save-dir>/world-<UTC 时间戳>.json`，先写 `.tmp` 再改名，只保留最近 3 份，启动时取最新能完整解析的一份。信封形状见 docs/plans/m2-city-phase.md「存档信封」，玩家表在信封的 `players` 里（没有单独的 `players.json`）；`round.tick` 是信封之外唯一的新增键，用来让 `status.json` 的 tick 重启后继续。
 
-光标方向键移动。Enter `ClaimTile`，Z `SetZone R`，E 向右加边，P `PlacePower`，Backspace `DemolishOwn`。
+客户端参数：`--join <host> --port <p> --name <n>`；`--identity <path>`（令牌与显示名，默认 `user://identity.cfg`，同机多开要分文件）；`--stub`（离线桩，不连服务器）；`--screenshot <path> --screenshot-seconds <s>`；`--input-script <path>`（回放 `client/dev/scripts/*.txt`）。
+
+操作：左侧工具栏 1–8（占领、分区 R/C/I、清除、道路、电站、拆除），左键施放，按住拖动连画分区和道路，右键或 Esc 取消，税率滑块松手生效；WASD 或屏幕边缘平移，滚轮缩放。HUD 显示资金、收入、人口、岗位、税率、剩余时间、双方总分、最近警报和危机横幅。
+
+本机一键演示（起服务器加一个窗口客户端，`--two` 开两个）：
+
+```bash
+tests/run_local_demo.sh
+```
 
 出生地是示例坐标，不是锁定玩法，全部由 `MAP_SIZE` 派生（`WorldState.SPAWN_A / SPAWN_B`）：阵营 A 为 `[0,8) × [0,8)`，阵营 B 为 `[MAP_SIZE-8, MAP_SIZE) × [MAP_SIZE-8, MAP_SIZE)`，128 地图上即 `[120,128)²`。
 
@@ -107,7 +115,7 @@ godot --path . res://client/techart_sample.tscn
 ./client/run_techart_sample.sh
 ```
 
-`res://client/techart_sample.tscn` 只实例化无 HUD 的 `sample_interchange.tscn`，不替换 `res://client/main.tscn`，也不改 listen-host。势力色和电力色是 overlay 材质，不写进世界 albedo。光照数值见 `client/assets/techart/roads_interchange/docs/LIGHT_PRESETS.md`。
+`res://client/techart_sample.tscn` 只实例化无 HUD 的 `sample_interchange.tscn`，不替换 `res://client/main.tscn`。势力色和电力色是 overlay 材质，不写进世界 albedo。光照数值见 `client/assets/techart/roads_interchange/docs/LIGHT_PRESETS.md`。
 
 The M1 mid-realism pack lives at `client/assets/techart/roads_interchange/` with `res://` prefix `res://client/assets/techart/roads_interchange/`. Forward+ is the project default since 2026-10-07. Open the HUD-free sample via `res://client/techart_sample.tscn`.
 
