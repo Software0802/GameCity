@@ -424,7 +424,9 @@ func sim_tick(tick_index: int, seconds_remaining: int = 0) -> Array:
 	var alerts: Array = []
 	_grow(dirty)
 	_settle(dirty, alerts)
-	_economy.tick(_pace())
+	if not free_build:
+		# Sandbox: no build costs and no upkeep; the treasury is frozen (no income either).
+		_economy.tick(_pace())
 	var events: Array = []
 	if _crisis_pending:
 		_crisis_pending = false

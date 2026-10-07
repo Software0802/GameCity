@@ -444,7 +444,7 @@ func _crisis_step(now: int) -> void:
 func _set_world_crisis(active: bool) -> void:
 	var world: WorldState = GameNet.world
 	if world.has_method("set_crisis"):
-		world.call("set_crisis", active)
+		world.call("set_crisis", active, _crisis_end_unix() if active else 0)
 
 
 func _crisis_event(active: bool) -> CrisisEvent:

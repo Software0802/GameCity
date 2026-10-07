@@ -46,7 +46,7 @@ godot --path . -- --join 127.0.0.1 --port 24567 --name alice
 | `--status-file <path>` | 不写 | 每秒原子写 `{tick, players, players_known, round_ends_at_unix, saved_at_unix, pid, phase}` |
 | `--stop-file <path>` | `<save-dir>/stop` | 文件出现即存档、删除该文件并以 0 退出。headless Godot 4.7.2 没有信号钩子（SIGTERM 直接杀进程、不触发任何通知），这是唯一的优雅停机入口，定时存档是保底。`--stop-file ""` 关闭 |
 | `--start-treasury <int>` | 不设（沿用 `SliceConstants.START_TREASURY`） | **新一轮**（首次启动或 `--new-round`）时对两个阵营调用 `WorldState.set_treasury_all(float(amount))`；恢复存档时不应用。sim-economy 合入前该方法不存在，调用静默跳过并打印一行日志 |
-| `--free-build` | 关 | `WorldState.free_build = true`（sim-economy 合入后生效） |
+| `--free-build` | 关 | 沙盒：不扣建造费和维护费，国库冻结（也没有收入） |
 | `--new-round` | 关 | 把旧存档移到 `<save-dir>/backup-<时间戳>/`，用 `WorldState.new()` 开新一轮 |
 | `--smoke-host` | 关 | 旧两进程冒烟：预种阵营 A 的脚本玩家 `smoke-host` 并执行原 host 的三条指令（`(0,0)` 分区 R、边 `(0,0)-(1,0)`、占领 `(8,0)`），第一个连入者因此分到 B；收到 5 条远端指令后广播 `MatchEnd{server_stop}`，1 秒后退出。不传 `--save-dir` 时不落盘 |
 
@@ -66,6 +66,9 @@ godot --headless --path . -s res://server/permission_check.gd
 # 存档：建世界、下指令、跑 tick，to_save_dict → JSON → from_save_dict 逐格逐边逐电站比较 → SAVE_OK
 #（输出含一行预期的 ERROR，以退出码为准）
 godot --headless --path . -s res://server/save_roundtrip_check.gd
+# 模拟规则（pace 0.01）：没钱被拒、有路有电升档、缺路缺电不升、电站超载欠压、污染跨界、危机减容、
+# 税率边界、存档后计时器继续、FactionState 收入与手算一致 → SIM_OK，并打印 100 tick 的 SIM_PERF
+godot --headless --path . -s res://server/sim_check.gd
 # 玩家表与存档信封：阵营平衡、token 哈希查找、信封 → JSON → 恢复逐字段比较、只留 3 份、
 # 跳过损坏的最新文件、拒绝不同版本、--new-round 备份 → PERSIST_OK（输出含预期的 WARNING/ERROR 行）
 godot --headless --path . -s res://server/persistence_check.gd

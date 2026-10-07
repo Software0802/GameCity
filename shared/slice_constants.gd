@@ -45,6 +45,8 @@ const TIER_UP_SECONDS := 120
 const TIER_DOWN_SECONDS := 180
 const SAT_UP := 0.7
 const SAT_DOWN := 0.3
+## Satisfaction factor while the faction's demand for a tile's zone is not positive.
+const DEMAND_GATE_CLOSED := 0.3
 ## Indexed by building tier 0–2.
 const TIER_POP: Array[int] = [1, 3, 8]
 const TIER_JOBS: Array[int] = [2, 6, 16]

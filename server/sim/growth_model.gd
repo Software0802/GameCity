@@ -21,9 +21,6 @@ extends RefCounted
 ## run() takes copy-on-write views of the per-tile arrays and touches no objects;
 ## WorldState applies the tier changes it returns.
 
-## Demand gate while the zone's demand is not positive. Pending a SliceConstants
-## slot (requested in the sim-economy hand-back); it is not duplicated elsewhere.
-const DEMAND_GATE_CLOSED := 0.3
 ## Float slack on the SAT_UP / SAT_DOWN comparisons.
 const EPS := 1e-6
 
@@ -43,7 +40,7 @@ func _init() -> void:
 
 
 static func gate_for(demand: float) -> float:
-	return 1.0 if demand > 0.0 else DEMAND_GATE_CLOSED
+	return 1.0 if demand > 0.0 else SliceConstants.DEMAND_GATE_CLOSED
 
 
 static func tax_penalty(tax_rate: float) -> float:
