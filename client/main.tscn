@@ -31,6 +31,8 @@ surface_material_override/0 = SubResource("StandardMaterial3D_ground")
 [node name="StubLabel" type="Label" parent="Hud"]
 offset_left = 16.0
 offset_top = 16.0
-offset_right = 640.0
-offset_bottom = 44.0
-text = "GameCity skeleton"
+offset_right = 980.0
+offset_bottom = 120.0
+theme_override_font_sizes/font_size = 18
+autowrap_mode = 2
+text = "GameCity listen-host"

@@ -2,7 +2,7 @@
 
 归档说明：协议草案 v0。`shared/` 放纯数据，`server/` 目前只保留对局生命周期入口。本文件描述要接的接口，不是已经实现的联网。
 
-Status: draft interface. Do not treat the skeleton as a working multiplayer build.
+Status: draft interface. Listen-host transport for this slice lives in `server/net_authority.gd` (autoload `GameNet`). Default ENet port **24567**. The rules below stay the contract.
 
 ## 权威模型 / Authority
 
@@ -44,9 +44,9 @@ Status: draft interface. Do not treat the skeleton as a working multiplayer buil
 
 ### Dictionary 往返 / Dictionary round-trip
 
-上表里的载荷提供 `to_dict()` / `from_dict()`，给以后的 `MultiplayerAPI` 用。v0 不调用 RPC，也不创建 peer。
+上表里的载荷提供 `to_dict()` / `from_dict()`，RPC 直接传这些字典。`shared/` 里的脚本不创建 peer。
 
-- 键名与脚本字段一致。`kind`、`reason`、`owner`、`zone`、`winner` 用枚举整型。
+- 键名与脚本字段一致。`kind`、`reason`、`owner`、`zone`、`winner` 用枚举整型。这些脚本本身不创建 peer；RPC 在 `server/net_authority.gd`。
 - 边的端点写成 `{"x": int, "y": int}`。读入时也接受已经是 `Vector2i` 的值。
 - `InterestId` 写出 `block_x`、`block_y`、`linear_id`、`key`。读入优先块坐标，否则线性 id，否则 `"bx,by"`。
 - `InterestUpdate.add` / `remove` 的元素可以是该字典、线性 id 整数，或 `"bx,by"` 字符串。
@@ -75,7 +75,7 @@ Status: draft interface. Do not treat the skeleton as a working multiplayer buil
 - 不认识的 `kind` → `UNKNOWN_COMMAND`
 - 形状合法 → `OK`
 
-所有权、相邻占领、边的两端归属仍由服务器规则判断。规则未写时，进行中的对局继续由 `server/match_sim.gd` 返回 `NOT_IMPLEMENTED`。数据层不执行这些规则。
+所有权、相邻占领、边的两端归属由 `server/world_state.gd` 判断。数据层不执行这些规则。
 
 ## 客户端 → 服务器 / Commands
 
@@ -93,7 +93,7 @@ Status: draft interface. Do not treat the skeleton as a working multiplayer buil
 
 除这七个指令外，客户端没有别的写世界入口。
 
-`Reject` 至少带：对应指令、`ReasonCode`、可选说明。原因码表见世界 brief。骨架在规则写完之前对进行中的对局返回 `NOT_IMPLEMENTED`。
+`Reject` 至少带：对应指令、`ReasonCode`、可选说明。原因码表见世界 brief。进行中的对局不再用 `NOT_IMPLEMENTED` 代替权限判断。
 
 ## 服务器 → 客户端 / Server messages
 
@@ -121,14 +121,15 @@ Status: draft interface. Do not treat the skeleton as a working multiplayer buil
 - 未订阅区域只收 `RegionSummary`，不收逐格 `TileDelta` / `EdgeDelta` 流。
 - **重连**发送一份快照（reconnect snapshot），再按当前订阅恢复增量。切片不做断线后的主机迁移；主机掉线仍直接 `MatchEnd`。
 
-## 进程入口（骨架现状）
+## 进程入口
 
-- 客户端场景：`res://client/main.tscn`。只摆相机和本地意图占位，不连接 ENet。
-- 服务器场景：`res://server/main.tscn`。可 `--headless`。进入 play、约 1 秒 tick、`submit_command` 返回 `NOT_IMPLEMENTED`，`notify_host_dropped()` 会 `MatchEnd`。
-- listen-host 将来是把这份服务器模拟和客户端表现放进同一进程，不是再写一份规则。
+- 客户端场景：`res://client/main.tscn`。`H` 在本机 listen，`J` 加入 `127.0.0.1`。方向键移动光标，Enter 发送 `ClaimTile`。
+- 无头 listen-host：`res://server/main.tscn`。默认端口 24567，第二名玩家连上后 `MatchStart`。`notify_host_dropped()` 广播 `MatchEnd`（胜者 `NEUTRAL`，原因 `host_drop`）。
+- 加入方：`res://client/main.tscn -- --join 127.0.0.1 --port 24567`。
+- listen-host 与无头入口共用 `GameNet` 和 `server/world_state.gd`，不另写一套规则。
 
 ## 明确不做（v0 文档范围）
 
-- 不实现 MultiplayerAPI peer、ENet 端口或复制代码。
 - 不做主机迁移、观战、回放。
 - 不把水务同步进协议。
+- 不把人口、财政、拥堵公式当成已调参结果。tick 会写占位值。

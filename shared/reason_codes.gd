@@ -1,8 +1,8 @@
 class_name ReasonCode
 extends RefCounted
 
-## Reject.reason values. NOT_IMPLEMENTED is the skeleton default.
-## Rule names match docs/briefs/world-vertical-slice.md.
+## Reject.reason values. Names match docs/briefs/world-vertical-slice.md.
+## In-match rules return a specific code. NOT_IMPLEMENTED stays in the enum.
 
 enum Id {
 	OK,
