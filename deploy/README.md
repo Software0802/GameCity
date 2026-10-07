@@ -32,7 +32,7 @@ ENet 走 **UDP 24567**，安全组放行 UDP。
 ## 首次部署清单（负责人确认后，按顺序）
 
 1. 核对 ECS：`uname -m`、可用内存（`MemoryMax=400M` 是起点）、磁盘、UDP 放行。
-2. 建账号与目录：`useradd -r -s /usr/sbin/nologin gamecity`；`mkdir -p /opt/gamecity/{releases,data,backups}`；`chown -R gamecity:gamecity /opt/gamecity`。
+2. 建账号与目录：`useradd -r -d /opt/gamecity -s /usr/sbin/nologin gamecity`；`mkdir -p /opt/gamecity/{releases,data,backups}`；`chown -R gamecity:gamecity /opt/gamecity`。unit 里也设了 `Environment=HOME=/opt/gamecity`，Godot 的 `user://` 日志与 shader cache 会落在 `/opt/gamecity/.local/share/godot/`。
 3. 放 Godot 二进制到 `/opt/gamecity/godot`，`chmod +x`，`/opt/gamecity/godot --version` 必须是 `4.7.2.stable`。
 4. `install -m 640 -o root -g gamecity deploy/gamecity.env.example /opt/gamecity/.env`，按需改端口 / pace / 轮次。
 5. `install -m 644 deploy/gamecity.service /etc/systemd/system/`；账号不同时再装 `user.conf`；`systemctl daemon-reload && systemctl enable gamecity`。

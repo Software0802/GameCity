@@ -14,6 +14,9 @@ Type=simple
 User=gamecity
 Group=gamecity
 WorkingDirectory=/opt/gamecity
+# A system account has no home; Godot still writes user://logs and shader cache under
+# $HOME/.local/share/godot, so give it one it can write to.
+Environment=HOME=/opt/gamecity
 EnvironmentFile=/opt/gamecity/.env
 ExecStart=/opt/gamecity/godot --headless --path /opt/gamecity/current res://server/main.tscn -- --port ${GAMECITY_PORT} --pace ${GAMECITY_PACE} --round-seconds ${GAMECITY_ROUND_SECONDS} --save-interval ${GAMECITY_SAVE_INTERVAL} --save-dir /opt/gamecity/data --status-file /opt/gamecity/data/status.json
 Restart=on-failure
