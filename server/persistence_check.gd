@@ -83,15 +83,15 @@ func _check_players(errors: Array[String]) -> void:
 
 
 func _check_round_state(errors: Array[String]) -> void:
-	var round = PersistenceScript.RoundState.new()
-	round.started_at_unix = 1000
-	round.ends_at_unix = 1000 + 20
-	round.pace = 0.5
-	round.phase = PersistenceScript.PHASE_ENDED
-	round.crisis_fired = true
-	round.tick = 17
-	var back = PersistenceScript.RoundState.from_dict(JSON.parse_string(JSON.stringify(round.to_dict(), "", true, true)))
-	_expect(errors, back != null and _values_equal(back.to_dict(), round.to_dict()), "round roundtrip")
+	var round_state = PersistenceScript.RoundState.new()
+	round_state.started_at_unix = 1000
+	round_state.ends_at_unix = 1000 + 20
+	round_state.pace = 0.5
+	round_state.phase = PersistenceScript.PHASE_ENDED
+	round_state.crisis_fired = true
+	round_state.tick = 17
+	var back = PersistenceScript.RoundState.from_dict(JSON.parse_string(JSON.stringify(round_state.to_dict(), "", true, true)))
+	_expect(errors, back != null and _values_equal(back.to_dict(), round_state.to_dict()), "round roundtrip")
 	_expect(errors, back != null and back.round_seconds() == 20 and back.is_ended(), "round helpers")
 	_expect(errors, PersistenceScript.RoundState.from_dict({}) == null, "empty round rejected")
 	_expect(errors, PersistenceScript.RoundState.from_dict({"started_at_unix": 5, "ends_at_unix": 5}) == null, "zero-length round rejected")
@@ -131,14 +131,14 @@ func _check_envelope_roundtrip(errors: Array[String], scratch: String) -> void:
 	var players = PlayersScript.new()
 	players.create("alice", players.pick_faction(), PlayersScript.hash_token("t1"), 10)
 	players.create("bob", players.pick_faction(), PlayersScript.hash_token("t2"), 11)
-	var round = PersistenceScript.RoundState.new()
-	round.started_at_unix = 2000
-	round.ends_at_unix = 2000 + SliceConstants.ROUND_SECONDS_TEST
-	round.pace = 0.01
-	round.crisis_fired = true
-	round.tick = 42
+	var round_state = PersistenceScript.RoundState.new()
+	round_state.started_at_unix = 2000
+	round_state.ends_at_unix = 2000 + SliceConstants.ROUND_SECONDS_TEST
+	round_state.pace = 0.01
+	round_state.crisis_fired = true
+	round_state.tick = 42
 
-	var envelope: Dictionary = PersistenceScript.build_envelope(world, players, round, 2042)
+	var envelope: Dictionary = PersistenceScript.build_envelope(world, players, round_state, 2042)
 	for key in ["version", "saved_at_unix", "round", "players", "world"]:
 		_expect(errors, envelope.has(key), "envelope has %s" % key)
 	_expect(errors, envelope["version"] == SliceConstants.SAVE_FORMAT_VERSION, "envelope version")
@@ -157,7 +157,7 @@ func _check_envelope_roundtrip(errors: Array[String], scratch: String) -> void:
 		return
 	_expect(errors, loaded.path == path, "load_latest picks the file just written")
 	_expect(errors, loaded.saved_at_unix == 2042, "saved_at_unix restored")
-	_expect(errors, _values_equal(loaded.round.to_dict(), round.to_dict()), "round restored")
+	_expect(errors, _values_equal(loaded.round.to_dict(), round_state.to_dict()), "round restored")
 	_expect(errors, _values_equal(loaded.players.to_save_array(), players.to_save_array()), "players restored")
 	_expect(errors, _values_equal(loaded.world.to_save_dict(), world.to_save_dict()), "world restored")
 	_expect(errors, loaded.world.tile_at(8, 0).owner == a and loaded.world.has_power_source(spawn_b.x, spawn_b.y), "world content restored")
@@ -167,8 +167,8 @@ func _check_envelope_roundtrip(errors: Array[String], scratch: String) -> void:
 	# Rotation: five writes keep the newest three.
 	for i in 4:
 		OS.delay_msec(3)
-		round.tick += 1
-		var extra: String = store.write(PersistenceScript.build_envelope(world, players, round, 2050 + i))
+		round_state.tick += 1
+		var extra: String = store.write(PersistenceScript.build_envelope(world, players, round_state, 2050 + i))
 		_expect(errors, extra != "", "rotation write %d" % i)
 	var kept: PackedStringArray = store.list_saves()
 	_expect(errors, kept.size() == PersistenceScript.KEEP_LATEST, "rotation keeps %d (got %d)" % [PersistenceScript.KEEP_LATEST, kept.size()])

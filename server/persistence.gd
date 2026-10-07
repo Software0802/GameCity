@@ -50,22 +50,22 @@ class RoundState:
 	## Returns null when the clock is unusable (missing or inverted times, bad pace,
 	## unknown phase).
 	static func from_dict(data: Dictionary) -> RoundState:
-		var round := RoundState.new()
-		round.started_at_unix = int(data.get("started_at_unix", 0))
-		round.ends_at_unix = int(data.get("ends_at_unix", 0))
-		round.pace = float(data.get("pace", SliceConstants.PACE_DEFAULT))
-		round.phase = str(data.get("phase", PHASE_PLAY))
-		round.crisis_fired = bool(data.get("crisis_fired", false))
-		round.tick = int(data.get("tick", 0))
-		if round.started_at_unix <= 0 or round.ends_at_unix <= round.started_at_unix:
+		var state := RoundState.new()
+		state.started_at_unix = int(data.get("started_at_unix", 0))
+		state.ends_at_unix = int(data.get("ends_at_unix", 0))
+		state.pace = float(data.get("pace", SliceConstants.PACE_DEFAULT))
+		state.phase = str(data.get("phase", PHASE_PLAY))
+		state.crisis_fired = bool(data.get("crisis_fired", false))
+		state.tick = int(data.get("tick", 0))
+		if state.started_at_unix <= 0 or state.ends_at_unix <= state.started_at_unix:
 			return null
-		if not (is_finite(round.pace) and round.pace > 0.0):
+		if not (is_finite(state.pace) and state.pace > 0.0):
 			return null
-		if round.phase != PHASE_PLAY and round.phase != PHASE_ENDED:
+		if state.phase != PHASE_PLAY and state.phase != PHASE_ENDED:
 			return null
-		if round.tick < 0:
-			round.tick = 0
-		return round
+		if state.tick < 0:
+			state.tick = 0
+		return state
 
 
 class LoadedSave:
@@ -155,8 +155,8 @@ static func parse_envelope(data: Variant, label: String) -> LoadedSave:
 	if not (raw_round is Dictionary):
 		push_error("save %s: missing round" % label)
 		return null
-	var round := RoundState.from_dict(raw_round)
-	if round == null:
+	var round_state := RoundState.from_dict(raw_round)
+	if round_state == null:
 		push_error("save %s: round clock invalid %s" % [label, str(raw_round)])
 		return null
 	var raw_world = envelope.get("world", null)
@@ -169,17 +169,17 @@ static func parse_envelope(data: Variant, label: String) -> LoadedSave:
 		return null
 	var loaded := LoadedSave.new()
 	loaded.saved_at_unix = int(envelope.get("saved_at_unix", 0))
-	loaded.round = round
+	loaded.round = round_state
 	loaded.players = Players.from_save_array(envelope.get("players", []))
 	loaded.world = world
 	return loaded
 
 
-static func build_envelope(world: WorldState, players: Players, round: RoundState, saved_at_unix: int) -> Dictionary:
+static func build_envelope(world: WorldState, players: Players, round_state: RoundState, saved_at_unix: int) -> Dictionary:
 	return {
 		"version": SliceConstants.SAVE_FORMAT_VERSION,
 		"saved_at_unix": saved_at_unix,
-		"round": round.to_dict(),
+		"round": round_state.to_dict(),
 		"players": players.to_save_array(),
 		"world": world.to_save_dict(),
 	}
