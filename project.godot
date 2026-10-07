@@ -1,0 +1,25 @@
+; Engine configuration file.
+; GameCity — one Godot 4 project at the repo root.
+; shared/, server/, and client/ are folders of this project, not separate games.
+
+config_version=5
+
+[application]
+
+config/name="GameCity"
+config/description="Two-faction light-versus city builder (vertical-slice skeleton)."
+run/main_scene="res://client/main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.184314, 0.227451, 0.203922, 1)
+textures/canvas_textures/default_texture_filter=0
