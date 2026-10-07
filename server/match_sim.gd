@@ -161,6 +161,10 @@ func _ready() -> void:
 	else:
 		GameNet.set_phase(GameNet.Phase.PLAY)
 	crisis_active = not round_state.is_ended() and round_state.crisis_fired and now < _crisis_end_unix()
+	if round_state.crisis_fired:
+		# The save may hold crisis_active from mid-storm; the clock decides whether the
+		# storm is still on, so the world is synced to that (a no-op before sim-economy).
+		_set_world_crisis(crisis_active)
 	_status_path = ServerPersistence.resolve_path(config.status_file)
 	_stop_path = _resolve_stop_path()
 	_save("boot")
@@ -425,7 +429,8 @@ func _crisis_event(active: bool) -> CrisisEvent:
 	event.kind = CrisisEvent.KIND_GRID_STORM
 	event.active = active
 	event.detail = "shared"
-	event.ends_at_unix = _crisis_end_unix()
+	# CrisisEvent contract: ends_at_unix is 0 when active is false.
+	event.ends_at_unix = _crisis_end_unix() if active else 0
 	return event
 
 
