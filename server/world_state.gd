@@ -1,15 +1,18 @@
 class_name WorldState
 extends RefCounted
 
-## Authoritative 64×64 tiles, orthogonal edges, and permission checks.
+## Authoritative MAP_SIZE×MAP_SIZE tiles, orthogonal edges, and permission checks.
 ## Pure data (no Node). Listen-host and the headless scene both use this.
 ## Spawn blocks are an example placement, not a locked coordinate:
-## faction A owns tiles [0,8) × [0,8); faction B owns [56,64) × [56,64).
+## faction A owns tiles [0,SPAWN_SIZE)², faction B owns the mirrored corner
+## [MAP_SIZE-SPAWN_SIZE, MAP_SIZE)². Both are derived from SliceConstants.MAP_SIZE.
 ## Population, fiscal, and congestion numbers are placeholders.
 
 const SPAWN_SIZE := 8
 const SPAWN_A := Vector2i(0, 0)
-const SPAWN_B := Vector2i(56, 56)
+const SPAWN_B := Vector2i(
+	SliceConstants.MAP_SIZE - SPAWN_SIZE, SliceConstants.MAP_SIZE - SPAWN_SIZE
+)
 const EDGE_CAPACITY := 10
 const CRISIS_TICK := 30
 const CONGESTION_WHEN_ZONED := 0.35
@@ -74,6 +77,118 @@ func has_power_source(x: int, y: int) -> bool:
 	return _power_sources.has(SliceConstants.tile_id(x, y))
 
 
+## Save body for the "world" slot of the save envelope (docs/plans/m2-city-phase.md).
+## Every value is JSON-serializable; payloads go through their to_dict().
+## {
+##   "map_size": int,                 must equal SliceConstants.MAP_SIZE to load
+##   "tiles": [TileDelta.to_dict()],  only tiles that differ from TileDelta.from_cell(x, y), ascending id
+##   "edges": [EdgeDelta.to_dict()],  ordered endpoints, ascending edge_key
+##   "power_sources": [int],          tile ids, ascending
+##   "crisis_active": bool,
+##   "crisis_sent": bool,             the _crisis_sent latch, so a restart does not refire the crisis
+## }
+func to_save_dict() -> Dictionary:
+	var tiles: Array = []
+	for tile in _tiles:
+		if not _is_default_tile(tile):
+			tiles.append(tile.to_dict())
+	var edge_keys: Array = _edges.keys()
+	edge_keys.sort()
+	var edges: Array = []
+	for key in edge_keys:
+		edges.append(_edges[key].to_dict())
+	var sources: Array = []
+	for raw_id in _power_sources.keys():
+		sources.append(int(raw_id))
+	sources.sort()
+	return {
+		"map_size": SliceConstants.MAP_SIZE,
+		"tiles": tiles,
+		"edges": edges,
+		"power_sources": sources,
+		"crisis_active": crisis_active,
+		"crisis_sent": _crisis_sent,
+	}
+
+
+## Static factory, not an instance method: a fresh WorldState pre-fills the spawn
+## corners, so loading must first clear every tile to its default and then overlay
+## the save. Doing that inside one factory keeps callers from having to know which
+## fields _init() touches. Returns null when the dict cannot be loaded (map_size
+## differs from SliceConstants.MAP_SIZE). Rows that fail validation are skipped
+## with a warning. sim-economy extends _restore() for its own fields.
+static func from_save_dict(data: Dictionary) -> WorldState:
+	var size := int(data.get("map_size", SliceConstants.MAP_SIZE))
+	if size != SliceConstants.MAP_SIZE:
+		push_error("WorldState.from_save_dict: map_size %d, expected %d" % [size, SliceConstants.MAP_SIZE])
+		return null
+	var world := WorldState.new()
+	world._restore(data)
+	return world
+
+
+func _restore(data: Dictionary) -> void:
+	for i in _tiles.size():
+		_tiles[i] = TileDelta.from_cell(i % SliceConstants.MAP_SIZE, int(i / SliceConstants.MAP_SIZE))
+	_edges.clear()
+	_power_sources.clear()
+	var raw_tiles = data.get("tiles", [])
+	if raw_tiles is Array:
+		for raw in raw_tiles:
+			if not (raw is Dictionary):
+				continue
+			var tile := TileDelta.from_dict(raw)
+			if not SliceConstants.in_map(tile.x, tile.y):
+				push_warning("WorldState._restore: tile (%d,%d) outside the map, skipped" % [tile.x, tile.y])
+				continue
+			var id := SliceConstants.tile_id(tile.x, tile.y)
+			if tile.id != id:
+				push_warning("WorldState._restore: tile (%d,%d) id %d, recomputed %d" % [tile.x, tile.y, tile.id, id])
+				tile.id = id
+			_tiles[id] = tile
+	var raw_edges = data.get("edges", [])
+	if raw_edges is Array:
+		for raw in raw_edges:
+			if not (raw is Dictionary):
+				continue
+			var edge := EdgeDelta.from_dict(raw)
+			if edge.removed:
+				continue
+			if (
+				not SliceConstants.in_map(edge.a.x, edge.a.y)
+				or not SliceConstants.in_map(edge.b.x, edge.b.y)
+				or not EdgeDelta.is_orthogonal(edge.a, edge.b)
+			):
+				push_warning("WorldState._restore: edge %s-%s invalid, skipped" % [edge.a, edge.b])
+				continue
+			var ordered := ordered_edge(edge.a, edge.b)
+			ordered.capacity = edge.capacity
+			ordered.congestion = edge.congestion
+			ordered.removed = false
+			_edges[edge_key(ordered.a, ordered.b)] = ordered
+	var raw_sources = data.get("power_sources", [])
+	if raw_sources is Array:
+		for raw in raw_sources:
+			var id := int(raw)
+			if id < 0 or id >= _tiles.size():
+				push_warning("WorldState._restore: power source id %d outside the map, skipped" % id)
+				continue
+			_power_sources[id] = true
+	crisis_active = bool(data.get("crisis_active", false))
+	_crisis_sent = bool(data.get("crisis_sent", false))
+
+
+## Field-by-field against a fresh TileDelta.from_cell so new TileDelta fields are
+## covered without listing them here.
+func _is_default_tile(tile: TileDelta) -> bool:
+	var actual := tile.to_dict()
+	var blank := TileDelta.from_cell(tile.x, tile.y).to_dict()
+	for key in actual:
+		if actual[key] != blank.get(key):
+			return false
+	return true
+
+
 ## Returns {reason, detail, events}. On failure, events is empty and state is unchanged.
 func apply(faction: int, cmd: GameCommand) -> Dictionary:
 	if cmd == null:
@@ -112,7 +227,7 @@ func sim_tick(tick_index: int) -> Array:
 		crisis.active = true
 		crisis.detail = "shared"
 		events.append(ServerEvent.with_crisis_event(crisis))
-	events.append(ServerEvent.with_score_tick(_score(tick_index)))
+	events.append(ServerEvent.with_score_tick(_score(tick_index, 0)))
 	return events
 
 
@@ -355,15 +470,35 @@ func _congestion_for(edge: EdgeDelta) -> float:
 	return CONGESTION_WHEN_ZONED
 
 
-func _score(tick_index: int) -> ScoreTick:
+## Raw terms are placeholders. Each normalized term is ScoreTick.share(own, other):
+## max(0, value), then own / (own + other), 0.5 when both are 0.
+## seconds_remaining is 0 in wave 0; the round clock fills it later.
+func _score(tick_index: int, seconds_remaining: int = 0) -> ScoreTick:
 	var tick := ScoreTick.new()
 	tick.tick_index = tick_index
+	tick.seconds_remaining = seconds_remaining
+	var raw: Dictionary = {}
 	for faction in [SliceConstants.Owner.FACTION_A, SliceConstants.Owner.FACTION_B]:
+		var pop := float(_population(faction))
+		raw[faction] = {
+			"pop": pop,
+			"fiscal": pop * 2.0 - float(_power_source_count(faction)),
+			"control": float(_owned_count(faction)),
+		}
+	for faction in [SliceConstants.Owner.FACTION_A, SliceConstants.Owner.FACTION_B]:
+		var other := SliceConstants.Owner.FACTION_B
+		if faction == SliceConstants.Owner.FACTION_B:
+			other = SliceConstants.Owner.FACTION_A
+		var mine: Dictionary = raw[faction]
+		var theirs: Dictionary = raw[other]
 		var line := ScoreTick.FactionScore.new()
 		line.faction = faction
-		line.pop = float(_population(faction))
-		line.fiscal = line.pop * 2.0 - float(_power_source_count(faction))
-		line.control = float(_owned_count(faction))
+		line.pop_raw = mine["pop"]
+		line.fiscal_raw = mine["fiscal"]
+		line.control_raw = mine["control"]
+		line.pop = ScoreTick.share(mine["pop"], theirs["pop"])
+		line.fiscal = ScoreTick.share(mine["fiscal"], theirs["fiscal"])
+		line.control = ScoreTick.share(mine["control"], theirs["control"])
 		tick.factions.append(line)
 	return tick
 

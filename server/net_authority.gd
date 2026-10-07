@@ -92,7 +92,7 @@ func set_camera_local(block_x: int, block_y: int) -> void:
 
 
 func notify_host_dropped() -> void:
-	_end(SliceConstants.Owner.NEUTRAL, "host_drop")
+	_end(SliceConstants.Owner.NEUTRAL, MatchEnd.REASON_SERVER_STOP)
 
 
 func start_match() -> void:
@@ -180,7 +180,7 @@ func _on_server_disconnected() -> void:
 	# Only a connected client should treat this as the listen-host dropping.
 	if multiplayer.is_server():
 		return
-	_end(SliceConstants.Owner.NEUTRAL, "host_drop")
+	_end(SliceConstants.Owner.NEUTRAL, MatchEnd.REASON_SERVER_STOP)
 
 
 func _on_sim_tick() -> void:
