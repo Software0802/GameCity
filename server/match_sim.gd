@@ -20,6 +20,9 @@ extends Node
 ##                           "" disables. Headless Godot has no signal hook: SIGTERM
 ##                           kills the process without running anything, so this is
 ##                           the graceful stop, and periodic saves are the backstop.
+##   --start-treasury <int>  starting treasury for BOTH factions of a NEW round, via
+##                           WorldState.set_treasury_all(float); ignored when a save is
+##                           restored, skipped (logged) until sim-economy adds the method
 ##   --free-build            WorldState.free_build = true (no costs once sim-economy lands)
 ##   --new-round             move old saves to backup-<ts>/ and start a fresh round
 ##   --smoke-host            legacy two-process smoke: seeds a scripted faction-A player
@@ -39,6 +42,7 @@ const STOP_FILE_NAME := "stop"
 const EXIT_BAD_ARGS := 2
 const VALUE_FLAGS: Array[String] = [
 	"--port", "--save-dir", "--save-interval", "--round-seconds", "--pace", "--status-file", "--stop-file",
+	"--start-treasury",
 ]
 const BOOL_FLAGS: Array[String] = ["--free-build", "--new-round", "--smoke-host"]
 
@@ -56,6 +60,8 @@ class Config:
 	var status_file := ""
 	var stop_file := ""
 	var stop_file_given := false
+	var start_treasury: int = 0
+	var start_treasury_given := false
 	var free_build := false
 	var new_round := false
 	var smoke_host := false
@@ -66,8 +72,9 @@ class Config:
 		return save_dir_given or not smoke_host
 
 	func summary() -> String:
-		return "port=%d save_dir=%s save_interval=%d round_seconds=%d pace=%s status_file=%s stop_file=%s free_build=%s new_round=%s smoke_host=%s persist=%s" % [
+		return "port=%d save_dir=%s save_interval=%d round_seconds=%d pace=%s status_file=%s stop_file=%s start_treasury=%s free_build=%s new_round=%s smoke_host=%s persist=%s" % [
 			port, save_dir, save_interval, round_seconds, pace, status_file, stop_file,
+			str(start_treasury) if start_treasury_given else "-",
 			free_build, new_round, smoke_host, persist(),
 		]
 
@@ -132,6 +139,7 @@ func _ready() -> void:
 		])
 	else:
 		world = WorldState.new()
+		_apply_start_treasury(world)
 		players = Players.new()
 		round_state = ServerPersistence.RoundState.new()
 		round_state.started_at_unix = now
@@ -232,6 +240,9 @@ static func parse_config(args: PackedStringArray) -> Config:
 			"--stop-file":
 				config.stop_file = value
 				config.stop_file_given = true
+			"--start-treasury":
+				config.start_treasury = _int_arg(config, flag, value, 0, 1 << 40)
+				config.start_treasury_given = true
 	return config
 
 
@@ -260,6 +271,19 @@ func _apply_world_flags(world: WorldState) -> void:
 		world.set("free_build", config.free_build)
 	elif config.free_build:
 		print("WorldState has no free_build property yet; --free-build recorded only")
+
+
+## --start-treasury on a fresh world only (first boot or --new-round); a restored save
+## keeps its treasuries. WorldState.set_treasury_all(float) is sim-economy's seam and
+## is skipped with a log line until it lands.
+func _apply_start_treasury(world: WorldState) -> void:
+	if not config.start_treasury_given:
+		return
+	if world.has_method("set_treasury_all"):
+		world.call("set_treasury_all", float(config.start_treasury))
+		print("start treasury %d applied via set_treasury_all" % config.start_treasury)
+	else:
+		print("WorldState has no set_treasury_all yet; start treasury %d recorded only" % config.start_treasury)
 
 
 ## The old listen-host player, kept for client/smoke_client.gd: a scripted faction-A

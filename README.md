@@ -45,6 +45,7 @@ godot --path . -- --join 127.0.0.1 --port 24567 --name alice
 | `--pace <float>` | 1.0 | 写入 `WorldState.pace` 与 `MatchStart.pace`。显式传入时覆盖存档里的 pace，否则沿用存档 |
 | `--status-file <path>` | 不写 | 每秒原子写 `{tick, players, players_known, round_ends_at_unix, saved_at_unix, pid, phase}` |
 | `--stop-file <path>` | `<save-dir>/stop` | 文件出现即存档、删除该文件并以 0 退出。headless Godot 4.7.2 没有信号钩子（SIGTERM 直接杀进程、不触发任何通知），这是唯一的优雅停机入口，定时存档是保底。`--stop-file ""` 关闭 |
+| `--start-treasury <int>` | 不设（沿用 `SliceConstants.START_TREASURY`） | **新一轮**（首次启动或 `--new-round`）时对两个阵营调用 `WorldState.set_treasury_all(float(amount))`；恢复存档时不应用。sim-economy 合入前该方法不存在，调用静默跳过并打印一行日志 |
 | `--free-build` | 关 | `WorldState.free_build = true`（sim-economy 合入后生效） |
 | `--new-round` | 关 | 把旧存档移到 `<save-dir>/backup-<时间戳>/`，用 `WorldState.new()` 开新一轮 |
 | `--smoke-host` | 关 | 旧两进程冒烟：预种阵营 A 的脚本玩家 `smoke-host` 并执行原 host 的三条指令（`(0,0)` 分区 R、边 `(0,0)-(1,0)`、占领 `(8,0)`），第一个连入者因此分到 B；收到 5 条远端指令后广播 `MatchEnd{server_stop}`，1 秒后退出。不传 `--save-dir` 时不落盘 |

@@ -173,8 +173,10 @@ log "scenario 4 ok: MatchEnd: clock after ~${ELAPSED}s, winner=$(field "$END_LIN
 # ---------------------------------------------------------------- 5 refusals
 log "scenario 5: command before hello, wrong protocol"
 PORT=$((PORT + 1))
-start_server s5 --port "$PORT" --save-dir "$SCRATCH/saves5" --round-seconds 600 --new-round
+start_server s5 --port "$PORT" --save-dir "$SCRATCH/saves5" --round-seconds 600 --new-round --start-treasury 123
 wait_for_log "Server ready" 15 || fail "refusal server did not start"
+grep -q "start_treasury=123" "$SERVER_LOG" || fail "--start-treasury not parsed"
+grep -qE "start treasury 123 (applied via set_treasury_all|recorded only)" "$SERVER_LOG" || fail "--start-treasury not applied or recorded on a new round"
 EARLY=$(client --name erin --early-command)
 echo "$EARLY"
 [ "$(field "$EARLY" early_reject)" = "NOT_AUTHENTICATED" ] || fail "command before hello was not NOT_AUTHENTICATED"
