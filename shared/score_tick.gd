@@ -2,8 +2,10 @@ class_name ScoreTick
 extends RefCounted
 
 ## Scoring snapshot. Weights are locked: pop 40% / fiscal 30% / control 30%.
-## Component values are placeholders. total applies those weights and does not
-## normalize each term onto 0–1 (that scale is still unfixed).
+## pop / fiscal / control are each normalized onto 0–1 with share(): the raw value
+## is clamped at 0, then divided by own + opponent (0.5 when both are 0).
+## pop_raw / fiscal_raw / control_raw carry the unnormalized values for the HUD.
+## total() is the weighted sum of the normalized terms, so it is also 0–1.
 
 class FactionScore:
 	extends RefCounted
@@ -13,6 +15,9 @@ class FactionScore:
 	var pop: float = 0.0
 	var fiscal: float = 0.0
 	var control: float = 0.0
+	var pop_raw: float = 0.0
+	var fiscal_raw: float = 0.0
+	var control_raw: float = 0.0
 
 	func total() -> float:
 		return (
@@ -27,6 +32,9 @@ class FactionScore:
 			"pop": pop,
 			"fiscal": fiscal,
 			"control": control,
+			"pop_raw": pop_raw,
+			"fiscal_raw": fiscal_raw,
+			"control_raw": control_raw,
 			"total": total(),
 		}
 
@@ -36,11 +44,27 @@ class FactionScore:
 		line.pop = float(data.get("pop", 0.0))
 		line.fiscal = float(data.get("fiscal", 0.0))
 		line.control = float(data.get("control", 0.0))
+		line.pop_raw = float(data.get("pop_raw", 0.0))
+		line.fiscal_raw = float(data.get("fiscal_raw", 0.0))
+		line.control_raw = float(data.get("control_raw", 0.0))
 		return line
 
 
 var tick_index: int = 0
+## Wall-clock seconds until the round ends. 0 once the clock has run out.
+var seconds_remaining: int = 0
 var factions: Array[FactionScore] = []
+
+
+## Normalized share for one scoring term: max(0, own) / (max(0, own) + max(0, other)).
+## Both zero gives 0.5. Result is in 0–1.
+static func share(own: float, other: float) -> float:
+	var mine: float = maxf(0.0, own)
+	var theirs: float = maxf(0.0, other)
+	var sum := mine + theirs
+	if sum <= 0.0:
+		return 0.5
+	return mine / sum
 
 
 func to_dict() -> Dictionary:
@@ -50,6 +74,7 @@ func to_dict() -> Dictionary:
 			lines.append(line.to_dict())
 	return {
 		"tick_index": tick_index,
+		"seconds_remaining": seconds_remaining,
 		"factions": lines,
 	}
 
@@ -57,6 +82,7 @@ func to_dict() -> Dictionary:
 static func from_dict(data: Dictionary) -> ScoreTick:
 	var tick := ScoreTick.new()
 	tick.tick_index = int(data.get("tick_index", 0))
+	tick.seconds_remaining = int(data.get("seconds_remaining", 0))
 	var lines: Array[FactionScore] = []
 	var raw_lines = data.get("factions", [])
 	if raw_lines is Array:

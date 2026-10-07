@@ -1,8 +1,8 @@
-# 垂直切片 Brief 索引
+# Brief 索引
 
-本目录归档 GameCity 垂直切片的锁定设计。实现以这些文档为准。仓库已接 listen-host 指令权限；完整模拟公式和美术仍未做。
+**2026-10-08 起以 [design-v2.md](design-v2.md) 为准。** 它取代下面 v1 锁定中与之冲突的条目（持久化、专用服务器、7 天轮次、128×128、军事阶段的交战规则）。v1 文档保留作历史，其中的数据类型继续有效。
 
-These files archive the locked vertical-slice design. The repo skeleton does not implement them yet.
+Design v2 supersedes the v1 locks below where they conflict. v1 files remain as history and as the source of the shared data types.
 
 | 文件 | 内容 |
 | --- | --- |
@@ -11,9 +11,9 @@ These files archive the locked vertical-slice design. The repo skeleton does not
 | [netcode-interface-v0.md](netcode-interface-v0.md) | 服务器权威协议草案 v0 |
 | [art-visual-source.md](art-visual-source.md) | 调色板、风格、镜头表 S01–S04 |
 
-## 锁定约束
+## v1 锁定约束（历史）
 
-以下决定已锁定，切片内不再改口径：
+以下为垂直切片时期的锁定，被 v2 取代的条目以 v2 为准：
 
 - **引擎**：Godot 4。
 - **模式**：2 个阵营，轻对抗，2–4 名玩家。
@@ -21,6 +21,7 @@ These files archive the locked vertical-slice design. The repo skeleton does not
 - **网络**：服务器权威协议；垂直切片允许 listen-host（主机跑同一套模拟）。
 - **世界**：64×64 地块；兴趣区 8×8 地块；道路图只允许正交（四邻），不允许斜向边。
 - **市政服务**：只有电力。切片不做供水。
+- **画面**（2026-10-07 修订）：程序化中等写实，Forward+ 为工程默认，资产只用 CC0。见 art brief。
 
 ## 非目标
 

@@ -43,6 +43,9 @@ func _check_permissions(errors: Array[String]) -> void:
 	var world = WorldStateScript.new()
 	var faction_a := SliceConstants.Owner.FACTION_A
 	var faction_b := SliceConstants.Owner.FACTION_B
+	# Opponent coordinates derive from faction B's spawn corner, never a literal.
+	var spawn_b: Vector2i = WorldStateScript.SPAWN_B
+	var spawn_b_east: Vector2i = spawn_b + Vector2i(1, 0)
 
 	var claim := world.apply(faction_a, GameCommand.claim_tile(8, 0))
 	_expect(errors, claim["reason"] == ReasonCode.Id.OK, "legal claim reason")
@@ -62,22 +65,22 @@ func _check_permissions(errors: Array[String]) -> void:
 	_expect(errors, steal["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE and steal["events"].is_empty(), "steal claim")
 	_expect(errors, world.tile_at(8, 0).owner == faction_a, "stolen tile unchanged")
 
-	var bounds := world.apply(faction_a, GameCommand.claim_tile(64, 0))
+	var bounds := world.apply(faction_a, GameCommand.claim_tile(SliceConstants.MAP_SIZE, 0))
 	_expect(errors, bounds["reason"] == ReasonCode.Id.OUT_OF_BOUNDS, "claim out of bounds")
 
 	var zone_neutral := world.apply(faction_a, GameCommand.set_zone(20, 20, SliceConstants.Zone.R))
 	_expect(errors, zone_neutral["reason"] == ReasonCode.Id.NOT_OWNER, "zone on neutral")
 
-	var zone_enemy := world.apply(faction_a, GameCommand.set_zone(56, 56, SliceConstants.Zone.I))
+	var zone_enemy := world.apply(faction_a, GameCommand.set_zone(spawn_b.x, spawn_b.y, SliceConstants.Zone.I))
 	_expect(errors, zone_enemy["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE, "zone on opponent")
-	_expect(errors, world.tile_at(56, 56).zone == SliceConstants.Zone.NONE, "opponent zone unchanged")
+	_expect(errors, world.tile_at(spawn_b.x, spawn_b.y).zone == SliceConstants.Zone.NONE, "opponent zone unchanged")
 
 	var zone_ok := world.apply(faction_a, GameCommand.set_zone(0, 0, SliceConstants.Zone.R))
 	_expect(errors, zone_ok["reason"] == ReasonCode.Id.OK and world.tile_at(0, 0).zone == SliceConstants.Zone.R, "zone own")
 	_expect(errors, world.tile_at(0, 0).has_building, "zone sets building")
 	_expect(errors, _has_kind(zone_ok["events"], ServerEvent.Kind.POWER_ALERT), "residential power alert")
 
-	var demolish_enemy := world.apply(faction_a, GameCommand.demolish_own(56, 56))
+	var demolish_enemy := world.apply(faction_a, GameCommand.demolish_own(spawn_b.x, spawn_b.y))
 	_expect(errors, demolish_enemy["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE, "demolish opponent")
 
 	world.apply(faction_a, GameCommand.set_zone(1, 0, SliceConstants.Zone.C))
@@ -88,7 +91,7 @@ func _check_permissions(errors: Array[String]) -> void:
 	var edge_neutral := world.apply(faction_a, GameCommand.add_edge(Vector2i(0, 7), Vector2i(0, 8)))
 	_expect(errors, edge_neutral["reason"] == ReasonCode.Id.EDGE_RULE and world.find_edge(Vector2i(0, 7), Vector2i(0, 8)) == null, "edge to neutral")
 
-	var edge_enemy := world.apply(faction_a, GameCommand.add_edge(Vector2i(56, 56), Vector2i(57, 56)))
+	var edge_enemy := world.apply(faction_a, GameCommand.add_edge(spawn_b, spawn_b_east))
 	_expect(errors, edge_enemy["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE, "edge on opponent")
 
 	var diagonal := world.apply(faction_a, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 1)))
@@ -104,8 +107,8 @@ func _check_permissions(errors: Array[String]) -> void:
 	var missing := world.apply(faction_a, GameCommand.remove_edge(Vector2i(0, 0), Vector2i(1, 0)))
 	_expect(errors, missing["reason"] == ReasonCode.Id.EDGE_RULE, "remove missing edge")
 
-	var power_enemy := world.apply(faction_a, GameCommand.place_power(56, 56))
-	_expect(errors, power_enemy["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE and not world.has_power_source(56, 56), "power on opponent")
+	var power_enemy := world.apply(faction_a, GameCommand.place_power(spawn_b.x, spawn_b.y))
+	_expect(errors, power_enemy["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE and not world.has_power_source(spawn_b.x, spawn_b.y), "power on opponent")
 
 
 func _check_power_tick_interest(errors: Array[String]) -> void:
@@ -121,11 +124,18 @@ func _check_power_tick_interest(errors: Array[String]) -> void:
 	world.apply(faction_a, GameCommand.set_zone(0, 0, SliceConstants.Zone.R))
 	world.apply(faction_a, GameCommand.set_zone(1, 0, SliceConstants.Zone.C))
 	world.apply(faction_a, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)))
+	# M2B: congestion follows building tiers. At pace 0.01 the served R tile reaches
+	# tier 1 on the second tick, loading its edge to 1/10, one 1/8 step.
+	world.apply(faction_a, GameCommand.place_power(0, 0))
+	world.pace = 0.01
 	var ticked: Array = world.sim_tick(1)
-	var congestion: ServerEvent = _first_kind(ticked, ServerEvent.Kind.CONGESTION_ALERT)
-	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, WorldStateScript.CONGESTION_WHEN_ZONED), "tick congestion")
 	_expect(errors, _first_kind(ticked, ServerEvent.Kind.SCORE_TICK) != null, "tick score")
-	var crisis_events: Array = world.sim_tick(WorldStateScript.CRISIS_TICK)
+	ticked = world.sim_tick(2)
+	var congestion: ServerEvent = _first_kind(ticked, ServerEvent.Kind.CONGESTION_ALERT)
+	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, 0.125), "tick congestion")
+	# The crisis is scheduled by server-core through set_crisis(); the next tick announces it.
+	world.set_crisis(true)
+	var crisis_events: Array = world.sim_tick(3)
 	var crisis: ServerEvent = _first_kind(crisis_events, ServerEvent.Kind.CRISIS_EVENT)
 	_expect(errors, crisis != null and crisis.crisis_event.active and world.crisis_active, "shared crisis")
 
@@ -133,7 +143,8 @@ func _check_power_tick_interest(errors: Array[String]) -> void:
 	for block in world.interest_for(faction_a, null):
 		keys[block.key()] = true
 	_expect(errors, keys.has("0,0") and keys.has("1,0") and keys.has("0,1"), "own and border interest")
-	_expect(errors, not keys.has("7,7"), "far faction not subscribed")
+	var far_key: String = WorldStateScript.spawn_block(SliceConstants.Owner.FACTION_B).key()
+	_expect(errors, not keys.has(far_key), "far faction not subscribed")
 	var with_camera := {}
 	for block in world.interest_for(faction_a, InterestId.new(3, 3)):
 		with_camera[block.key()] = true

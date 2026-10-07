@@ -1,12 +1,26 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://client/presentation.gd" id="1_pres"]
+[ext_resource type="Script" path="res://client/view/camera_rig.gd" id="2_camera"]
+[ext_resource type="Script" path="res://client/view/world_view.gd" id="3_world"]
+[ext_resource type="Script" path="res://client/play_input.gd" id="4_input"]
+[ext_resource type="Script" path="res://client/connection.gd" id="5_connection"]
+[ext_resource type="Script" path="res://client/ui/toolbar.gd" id="6_toolbar"]
+[ext_resource type="Script" path="res://client/ui/hud.gd" id="7_hud"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
-size = Vector2(64, 64)
+size = Vector2(128, 128)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
 albedo_color = Color(0.184314, 0.227451, 0.203922, 1)
+roughness = 1.0
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 1
+background_color = Color(0.137255, 0.168627, 0.152941, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.82, 0.87, 0.9, 1)
+ambient_light_energy = 0.7
 
 [node name="Client" type="Node3D"]
 script = ExtResource("1_pres")
@@ -14,25 +28,41 @@ script = ExtResource("1_pres")
 [node name="Camera" type="Camera3D" parent="."]
 projection = 1
 current = true
-size = 72.0
-position = Vector3(32, 43.5, 52.3)
+size = 40.0
+position = Vector3(4, 136, 67.4)
 rotation_degrees = Vector3(-65, 0, 0)
+script = ExtResource("2_camera")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-50, -30, 0)
+light_energy = 1.2
+shadow_enabled = true
+shadow_bias = 0.08
+shadow_normal_bias = 2.5
+directional_shadow_mode = 0
+directional_shadow_max_distance = 400.0
+
+[node name="Env" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
 
 [node name="Ground" type="MeshInstance3D" parent="."]
-position = Vector3(32, 0, 32)
+position = Vector3(64, 0, 64)
 mesh = SubResource("PlaneMesh_ground")
 surface_material_override/0 = SubResource("StandardMaterial3D_ground")
 
+[node name="World" type="Node3D" parent="."]
+script = ExtResource("3_world")
+
+[node name="Input" type="Node" parent="."]
+script = ExtResource("4_input")
+
+[node name="Connection" type="Node" parent="."]
+script = ExtResource("5_connection")
+
 [node name="Hud" type="CanvasLayer" parent="."]
 
-[node name="StubLabel" type="Label" parent="Hud"]
-offset_left = 16.0
-offset_top = 16.0
-offset_right = 980.0
-offset_bottom = 120.0
-theme_override_font_sizes/font_size = 18
-autowrap_mode = 2
-text = "GameCity listen-host"
+[node name="Toolbar" type="Control" parent="Hud"]
+script = ExtResource("6_toolbar")
+
+[node name="Panels" type="Control" parent="Hud"]
+script = ExtResource("7_hud")

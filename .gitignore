@@ -20,3 +20,6 @@ mono_crash.*.json
 Thumbs.db
 *~
 *.tmp
+
+# Claude Code subagent worktrees
+.claude/worktrees/

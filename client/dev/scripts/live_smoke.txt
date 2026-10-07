@@ -1,0 +1,25 @@
+# Live client against the headless --smoke-host. The host ends the round after its
+# fifth remote command, so this script sends exactly four: claim, zone, one road
+# step, and a SetTaxRate (which the pre-handshake host rejects as UNKNOWN_COMMAND,
+# proving the Reject alert path). This peer is faction B; B's spawn is
+# [MAP_SIZE-8, MAP_SIZE)^2, so the claim at 119,122 touches 120,122.
+#   godot --headless --path . res://server/main.tscn -- --port 24681 --smoke-host
+#   godot --path . -- --join 127.0.0.1 --port 24681 --input-script client/dev/scripts/live_smoke.txt \
+#     --screenshot /tmp/gamecity_live.png --screenshot-frames 240
+wait 30
+focus 121 122
+zoom 20
+wait 10
+tool claim
+click 119 122
+wait 10
+tool zone_r
+click 119 122
+wait 10
+tool road
+drag 120 122 119 122
+wait 10
+slider 0.20
+wait 10
+rclick
+wait 30
