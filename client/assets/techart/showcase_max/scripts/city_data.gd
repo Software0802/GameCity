@@ -188,7 +188,7 @@ func generate(seed_value: int) -> void:
 			if pl["owner"] != t["owner"]:
 				continue
 			var d := Vector2(t["x"], t["z"]).distance_to(Vector2(pl["tile"]))
-			if d <= float(SC.POWER_RADIUS_SUGGESTED):
+			if d <= float(SC.POWER_RADIUS):
 				t["power_covered"] = true
 				break
 

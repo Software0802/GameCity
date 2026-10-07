@@ -165,7 +165,7 @@ func _power() -> void:
 		var c := pc
 		c.a = 0.034
 		_flat_rect(fill, o.x + 0.8, o.z + 0.8, o.x + P - 0.8, o.z + P - 0.8, 0.26, c)
-	var rr := float(SC.POWER_RADIUS_SUGGESTED) * P
+	var rr := float(SC.POWER_RADIUS) * P
 	for pl in D.plants:
 		var tc: Vector3 = Cfg.tile_center(pl["tile"].x, pl["tile"].y)
 		var segs := 160
