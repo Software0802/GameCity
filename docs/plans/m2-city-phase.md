@@ -97,6 +97,20 @@
 - `client/smoke_client.gd`：`(55,56)`、`(56,56)`、`(57,56)` 同上。
 - `client/presentation.gd`：`cursor = Vector2i(55, 56)` 与 `dist := 56.0` 同上；相机取景按 `MAP_SIZE`。
 
+## 完成状态（2026-10-08 03:00）
+
+M2A、M2B 全部合入 `chore/agent-coordination`：`tests/run_smoke.sh` 7/7、`server_core_check.sh` 6 场景、`sim_check` / `persistence_check` / `session_check` / `view_check` 全绿；真实服务器加开窗客户端验证了握手、令牌重连（`returning=true`）、存档恢复、HUD 实时数值。
+
+## M2 打磨项（已记录，未做）
+
+- `TileDelta` 缺"此格有电站"标记：客户端画不出电站本体，也没有 `RemovePower` 工具入口。client-play 的提议是加 `has_power_plant: bool`（合约改动，服务器端在 `WorldState._copy_tile / _place_power / _remove_power` 填值）。
+- 人口按档位无条件计数：tier 0 的 R 格没路没电也算 1 人口，与 design-v2「R 要形成人口必须同时有路和电」有出入。改法：`TIER_POP` 只在满意度门（有路且有电）通过时计入。
+- `RemoveEdge` 没有工具栏入口。
+- HUD 文案为英文（默认字体不含 CJK）；污染没有专门调色板色，暂用 I 区密集色半透明。
+- 升档后 pop 3 > jobs 2 的孤立 R+C 组合会来回跷跷板（需求门 0.3 × 0.9 = 0.27 刚好低于 `SAT_DOWN`），调参项。
+- `--free-build` 冻结国库（沙盒），若需要"免费但有收入"要给 `SimEconomy.tick` 加旗标。
+- 服务器端 `hello_timeout`、`server_full` 两条路径没有自动化测试。
+
 ## 不在 M2
 
 技术人员的产生与迁移、军事、轮回继承、大厅与阵营选择、程序化建筑接入（M4）。
