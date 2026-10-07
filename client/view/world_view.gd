@@ -212,12 +212,14 @@ func _print_perf() -> void:
 		buildings += int(view.stats.get("buildings", 0))
 	var frame_ms := _frame_accum * 1000.0 / PERF_EVERY
 	_frame_accum = 0.0
+	# TIME_PROCESS is read before the draw burst so the burst does not count as process time
+	var proc_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	var draw_ms := _measure_draw_ms()
 	print("VIEW_PERF frame=%d draw_ms=%.2f frame_ms=%.2f proc_ms=%.2f fps=%.1f vram_mb=%.0f draw_calls=%d prims=%d objects=%d blocks=%d buildings=%d last_update_ms=%.2f max_update_ms=%.2f worst_block_ms=%.2f" % [
 		_frame,
 		draw_ms,
 		frame_ms,
-		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0,
+		proc_ms,
 		Performance.get_monitor(Performance.TIME_FPS),
 		Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
 		Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME),
