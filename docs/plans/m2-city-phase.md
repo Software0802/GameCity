@@ -85,7 +85,8 @@
 | `WorldState.faction_states() -> Array[FactionState]` | sim-economy | server-core 路由给各阵营 |
 | `WorldState.score(seconds_remaining) -> ScoreTick` | sim-economy | server-core |
 | `WorldState.free_build: bool` | sim-economy 读 | server-core 从 `--free-build` 设 |
-| `--pace`、`--round-seconds`、`--save-dir`、`--save-interval`、`--status-file`、`--port`、`--free-build`、`--new-round` | server-core 解析 | smoke-qa、client-play |
+| `--pace`、`--round-seconds`、`--save-dir`、`--save-interval`、`--status-file`、`--port`、`--free-build`、`--new-round`、`--start-treasury` | server-core 解析 | smoke-qa、client-play |
+| `WorldState.set_treasury_all(amount: float)` | sim-economy | server-core 在 `WorldState.new()` 后按 `--start-treasury` 调用，恢复存档时不调用 |
 | 事件量化：连续字段只在跨 1/8 档时发 `TileDelta` | sim-economy | client-play 的重绘频率依赖它 |
 | 客户端身份文件 `user://identity.cfg`（token、name） | client-play | smoke-qa 的重连测试复用同一读写类 |
 

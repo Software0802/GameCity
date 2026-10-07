@@ -25,8 +25,8 @@
 ## 发布流程（`deploy/deploy.sh`）
 
 1. 本地门禁：`permission_check`、`sim_check`、`tests/run_smoke.sh` 全绿，否则不打包。
-2. `git archive HEAD` 打包，记录 `BUILD_INFO.json`（sha、时间、脏标记）。
-3. 上传到 `releases/<sha>-<ts>/`，`mv -T` 切 `current`，`systemctl restart gamecity`。
+2. `git archive HEAD` 打包，默认排除 `client/assets/techart`（无头服务器用不到，包从 119 MB 降到约 100 KB；`GAMECITY_ARCHIVE_EXCLUDE=""` 可恢复完整打包），记录 `BUILD_INFO.json`（sha、时间、脏标记）。
+3. 上传到 `releases/<sha>-<ts>/`，解包后在主机跑一次 `godot --headless --import` 生成 `.godot/` 类缓存（不跑则 `shared/` 的 class_name 解析不到，启动报几十条 SCRIPT ERROR），再 `mv -T` 切 `current`，`systemctl restart gamecity`。
 4. 轮询 `status.json` 健康；失败则切回上一个 release 再重启，脚本以非零退出说明"已回滚"还是"回滚也失败"。
 5. 修剪到 3 个 release。
 
