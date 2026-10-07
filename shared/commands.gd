@@ -4,8 +4,8 @@ extends RefCounted
 ## Client → server intents. Payload only; the server accepts or rejects.
 ## See docs/briefs/gameplay-vertical-slice.md and netcode-interface-v0.md.
 ##
-## validate_shape() checks bounds, orthogonal edges, and the zone enum.
-## Ownership and adjacency stay on the server.
+## validate_shape() checks bounds, orthogonal edges, the zone enum, and the tax
+## rate range. Ownership, adjacency, and funds stay on the server.
 
 enum Kind {
 	CLAIM_TILE,
@@ -15,6 +15,7 @@ enum Kind {
 	PLACE_POWER,
 	REMOVE_POWER,
 	DEMOLISH_OWN,
+	SET_TAX_RATE,
 }
 
 var kind: Kind = Kind.CLAIM_TILE
@@ -25,6 +26,9 @@ var zone: int = SliceConstants.Zone.NONE
 ## Tile coordinates of the two cells an orthogonal edge connects.
 var edge_a: Vector2i = Vector2i(-1, -1)
 var edge_b: Vector2i = Vector2i(-1, -1)
+## Faction-level tax rate in [TAX_RATE_MIN, TAX_RATE_MAX]. Used by SET_TAX_RATE;
+## tile and edge fields stay unused for that kind.
+var rate: float = SliceConstants.TAX_RATE_DEFAULT
 
 
 func _init(p_kind: Kind = Kind.CLAIM_TILE) -> void:
@@ -61,6 +65,12 @@ static func demolish_own(x: int, y: int) -> GameCommand:
 	return _on_tile(Kind.DEMOLISH_OWN, x, y)
 
 
+static func set_tax_rate(p_rate: float) -> GameCommand:
+	var cmd := GameCommand.new(Kind.SET_TAX_RATE)
+	cmd.rate = p_rate
+	return cmd
+
+
 ## Returns ReasonCode.Id. OK means the shape is recognizable, not that the rule passed.
 func validate_shape() -> int:
 	match kind:
@@ -80,9 +90,19 @@ func validate_shape() -> int:
 				return ReasonCode.Id.OUT_OF_BOUNDS
 			if not EdgeDelta.is_orthogonal(edge_a, edge_b):
 				return ReasonCode.Id.NOT_ORTHOGONAL
+		Kind.SET_TAX_RATE:
+			if not is_valid_rate(rate):
+				return ReasonCode.Id.INVALID_RATE
 		_:
 			return ReasonCode.Id.UNKNOWN_COMMAND
 	return ReasonCode.Id.OK
+
+
+## True when p_rate is a finite number inside [TAX_RATE_MIN, TAX_RATE_MAX].
+static func is_valid_rate(p_rate: float) -> bool:
+	if not is_finite(p_rate):
+		return false
+	return p_rate >= SliceConstants.TAX_RATE_MIN and p_rate <= SliceConstants.TAX_RATE_MAX
 
 
 func to_dict() -> Dictionary:
@@ -93,6 +113,7 @@ func to_dict() -> Dictionary:
 		"zone": zone,
 		"edge_a": EdgeDelta.point_to_dict(edge_a),
 		"edge_b": EdgeDelta.point_to_dict(edge_b),
+		"rate": rate,
 	}
 
 
@@ -104,6 +125,7 @@ static func from_dict(data: Dictionary) -> GameCommand:
 	cmd.zone = int(data.get("zone", SliceConstants.Zone.NONE))
 	cmd.edge_a = EdgeDelta.point_from_dict(data.get("edge_a", {}))
 	cmd.edge_b = EdgeDelta.point_from_dict(data.get("edge_b", {}))
+	cmd.rate = float(data.get("rate", SliceConstants.TAX_RATE_DEFAULT))
 	return cmd
 
 

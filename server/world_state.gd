@@ -317,7 +317,7 @@ func _sync_power_events() -> Array:
 
 func _covered_ids() -> Dictionary:
 	var covered: Dictionary = {}
-	var radius := SliceConstants.POWER_RADIUS_SUGGESTED
+	var radius := SliceConstants.POWER_RADIUS
 	for raw_id in _power_sources.keys():
 		var origin := _tiles[int(raw_id)]
 		for dy in range(-radius, radius + 1):
