@@ -3,6 +3,8 @@ extends Node3D
 ## Camera and a thin command surface. Rules stay on the listen-host.
 ## H host, J join 127.0.0.1, arrows move the cursor, Enter claims,
 ## Z sets zone R, E adds an edge to +X, P places power, Backspace demolishes.
+## The cursor is the player view. After MatchStart, its 8×8 block is sent
+## with set_camera_local so the camera interest follows that view.
 ##   godot --path . -- --listen
 ##   godot --path . -- --join 127.0.0.1
 
@@ -11,6 +13,7 @@ extends Node3D
 
 var session: ClientSession
 var cursor := Vector2i(8, 0)
+var _camera_block := Vector2i(-1, -1)
 
 
 func _ready() -> void:
@@ -89,4 +92,16 @@ func _on_faction(assigned: int) -> void:
 
 
 func _refresh_label() -> void:
+	_sync_camera_block()
 	label.text = session.status_text(cursor)
+
+
+func _sync_camera_block() -> void:
+	if session == null or not session.match_started:
+		return
+	var block := InterestId.from_tile(cursor.x, cursor.y)
+	var next := Vector2i(block.block_x, block.block_y)
+	if next == _camera_block:
+		return
+	_camera_block = next
+	GameNet.set_camera_local(next.x, next.y)
