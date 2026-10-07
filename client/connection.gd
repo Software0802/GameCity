@@ -114,6 +114,8 @@ func _try_join() -> void:
 func _on_connected() -> void:
 	ever_connected = true
 	_tighten_enet_timeout()
+	# Decide before the CONNECTED status line is logged, or it reads "host without handshake".
+	hello_supported = GameNet.has_method("hello_rpc")
 	_set_state(State.CONNECTED)
 	_send_hello()
 
@@ -129,7 +131,6 @@ func _tighten_enet_timeout() -> void:
 
 
 func _send_hello() -> void:
-	hello_supported = GameNet.has_method("hello_rpc")
 	if not hello_supported:
 		return
 	var hello := identity.hello()
