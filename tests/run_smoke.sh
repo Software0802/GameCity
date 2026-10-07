@@ -434,7 +434,7 @@ step_begin 4 "handshake + reconnect (two names, two identity files)"
 P4=$(pick_port) || fatal_step "no free UDP port"
 D4="$TMP/step4"
 mkdir -p "$D4/save"
-SERVER_ARGS=(--port "$P4" --pace "$SMOKE_PACE" --round-seconds "$SMOKE_ROUND_SECONDS" --free-build --save-dir "$D4/save" --status-file "$D4/status.json")
+SERVER_ARGS=(--port "$P4" --pace "$SMOKE_PACE" --round-seconds "$SMOKE_ROUND_SECONDS" --free-build --save-dir "$D4/save" --save-interval 2 --status-file "$D4/status.json")
 ID_A="$D4/identity-A.cfg"
 ID_B="$D4/identity-B.cfg"
 start_server "$LOGS/04-server.log" "${SERVER_ARGS[@]}"
@@ -499,7 +499,7 @@ fi
 
 # ================================================================ 5 restart recovery
 
-step_begin 5 "restart recovery (SIGTERM, same --save-dir, status.json tick continues)"
+step_begin 5 "restart recovery (stop file, same --save-dir, status.json tick continues)"
 STATUS="$D4/status.json"
 fail5=""
 tick_before=""
@@ -509,19 +509,25 @@ if [ -f "$STATUS" ]; then
 	tick_before=$(json_int "$STATUS" tick)
 	ends_before=$(json_int "$STATUS" round_ends_at_unix)
 	pid_before=$(json_int "$STATUS" pid)
-	log "before SIGTERM: tick=$tick_before round_ends_at_unix=$ends_before pid=$pid_before"
+	log "before stop: tick=$tick_before round_ends_at_unix=$ends_before pid=$pid_before"
 else
 	fail5="no $STATUS: --status-file (and --save-dir) not implemented (server-core persistence)"
 fi
 
-if ! stop_pid "$SERVER_PID" 10; then
-	fail5="${fail5:-server did not exit within 10s of SIGTERM (save-on-SIGTERM missing, server-core)}"
+# Headless Godot cannot catch SIGTERM (it dies without running anything), so the graceful
+# stop is the stop file under --save-dir: the server saves, removes it and exits 0.
+touch "$D4/save/stop"
+if wait_exit "$SERVER_PID" 15; then
+	log "server exited on the stop file"
+else
+	fail5="${fail5:-server did not exit within 15s of the stop file (--stop-file, server-core)}"
+	stop_pid "$SERVER_PID" 5 || true
 fi
 saves=$(ls -1 "$D4/save" 2>/dev/null | wc -l | tr -d ' ')
 if [ "${saves:-0}" -eq 0 ] && [ -z "$fail5" ]; then
-	fail5="no save file under --save-dir $D4/save after SIGTERM (server-core persistence)"
+	fail5="no save file under --save-dir $D4/save after the stop (server-core persistence)"
 fi
-log "save files after SIGTERM: ${saves:-0}"
+log "save files after stop: ${saves:-0}"
 # A was holding; the server stop ends its hold.
 wait_exit "$A_PID" 5 || true
 
@@ -562,7 +568,7 @@ if [ $ready -eq 1 ]; then
 	log "2.5s later: tick=$tick_later"
 	if [ -z "$fail5" ]; then
 		if [ -z "$tick_after" ] || [ "$tick_after" -lt "${tick_before:-0}" ] || [ "$tick_after" -le 0 ]; then
-			fail5="status.json tick reset: before=$tick_before after=$tick_after (save-on-SIGTERM or restore missing, server-core)"
+			fail5="status.json tick reset: before=$tick_before after=$tick_after (save-on-stop or restore missing, server-core)"
 		elif [ -z "$tick_later" ] || [ "$tick_later" -le "$tick_after" ]; then
 			fail5="status.json tick stuck at $tick_after after restart: restored server is not ticking (server-core)"
 		elif [ "$ends_after" != "$ends_before" ]; then

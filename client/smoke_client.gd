@@ -193,6 +193,10 @@ func _initial_deadline_ms() -> int:
 func _try_join() -> void:
 	_joining = true
 	_join_started_ms = Time.get_ticks_msec()
+	# This client sends its own hello (with the identity-file token); GameNet's convenience
+	# auto_hello would otherwise register a fresh token-less player first.
+	if "auto_hello" in GameNet:
+		GameNet.set("auto_hello", false)
 	var err := GameNet.join(GameNet.host_from_args(), GameNet.port_from_args())
 	if err != OK:
 		_joining = false
