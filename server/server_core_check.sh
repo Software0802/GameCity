@@ -192,7 +192,7 @@ log "scenario 6: --smoke-host with client/smoke_client.tscn"
 PORT=$((PORT + 1))
 start_server s6 --port "$PORT" --smoke-host
 sleep 1
-SMOKE=$("$GODOT" --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --port "$PORT" 2>&1 | grep -E '^SMOKE_')
+SMOKE=$("$GODOT" --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --port "$PORT" 2>&1 | grep -E '^SMOKE_(OK|FAIL)' | tail -n 1)
 echo "$SMOKE"
 [ "$SMOKE" = "SMOKE_OK" ] || fail "legacy smoke: $SMOKE"
 wait_for_server_exit 10 || fail "smoke host did not exit after MatchEnd"
