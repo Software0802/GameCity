@@ -13,6 +13,7 @@ extends Node3D
 ##   --stub                       no network: client/dev/stub_server.gd feeds the session
 ##   --screenshot <path>          save the viewport N frames after MatchStart, then quit
 ##   --screenshot-frames <n>      N above (default 150)
+##   --screenshot-seconds <s>     wall-clock delay after MatchStart instead of frames
 ##   --input-script <path>        replay synthetic input (client/dev/input_script.gd)
 
 const SCREENSHOT_FRAMES_DEFAULT := 150
@@ -33,7 +34,10 @@ var input_script: InputScript = null
 
 var _screenshot_path := ""
 var _screenshot_frames := SCREENSHOT_FRAMES_DEFAULT
+## Negative means "count frames instead".
+var _screenshot_seconds := -1.0
 var _frames_since_start := -1
+var _seconds_since_start := 0.0
 var _screenshot_taken := false
 var _focused_once := false
 var _camera_block := Vector2i(-1, -1)
@@ -42,6 +46,7 @@ var _was_started := false
 
 
 func _ready() -> void:
+	get_viewport().msaa_3d = Viewport.MSAA_2X
 	_size_ground()
 	session = ClientSession.new()
 	session.name = "Session"
@@ -68,6 +73,9 @@ func _ready() -> void:
 
 	_screenshot_path = LaunchArgs.value("--screenshot", "")
 	_screenshot_frames = LaunchArgs.int_value("--screenshot-frames", SCREENSHOT_FRAMES_DEFAULT)
+	var seconds_arg := LaunchArgs.value("--screenshot-seconds", "")
+	if seconds_arg.is_valid_float():
+		_screenshot_seconds = float(seconds_arg)
 	var script_path := LaunchArgs.value("--input-script", "")
 	if not script_path.is_empty():
 		input_script = InputScript.new()
@@ -92,16 +100,19 @@ func _ready() -> void:
 	_on_session_updated()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_refresh_connection_text()
 	if _frames_since_start >= 0:
 		_frames_since_start += 1
-	if (
-		not _screenshot_taken
-		and not _screenshot_path.is_empty()
-		and _frames_since_start >= _screenshot_frames
-		and (input_script == null or input_script.finished)
-	):
+		_seconds_since_start += delta
+	if _screenshot_taken or _screenshot_path.is_empty() or _frames_since_start < 0:
+		return
+	var due := false
+	if _screenshot_seconds >= 0.0:
+		due = _seconds_since_start >= _screenshot_seconds
+	else:
+		due = _frames_since_start >= _screenshot_frames
+	if due and (input_script == null or input_script.finished):
 		_screenshot_taken = true
 		_take_screenshot()
 

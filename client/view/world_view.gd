@@ -111,7 +111,8 @@ func _build_shared() -> void:
 	_shared = {
 		"lit": lit,
 		"overlay": overlay,
-		"ring": _box(0.96, 0.02, 0.96),
+		# Edge to edge: a sub-pixel gap between rings aliases into stripes when zoomed out.
+		"ring": _box(1.0, 0.02, 1.0),
 		"fill": _box(0.74, 0.02, 0.74),
 		"building": _box(0.62, 1.0, 0.62),
 		"roof": _box(0.36, 0.04, 0.36),

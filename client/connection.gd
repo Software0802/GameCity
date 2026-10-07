@@ -4,6 +4,9 @@ extends Node
 ## Client side of the transport and the handshake. Joins the server, sends
 ## ClientHello through GameNet.hello_rpc once the transport connects, stores the
 ## token from WELCOME, and after a drop retries every RETRY_SEC with that token.
+## GameNet.auto_hello is switched off before each join so only this hello (with the
+## stored token) reaches the server; otherwise a token-less hello would register a
+## new player first and the reconnect would come back with returning = false.
 ##
 ## Until server-core lands hello_rpc, the host announces the faction with the
 ## faction_assigned signal and never sends WELCOME; that path is accepted as
@@ -17,6 +20,11 @@ const DEFAULT_HOST := "127.0.0.1"
 const DEFAULT_PORT := 24567
 const RETRY_SEC := 2.0
 const CONNECT_TIMEOUT_SEC := 4.0
+## ENet drop detection for the server peer: ENet's defaults wait 5–30 s of unanswered
+## pings; these bring a dead server down to 2–4 s so the reconnect prompt is prompt.
+const ENET_TIMEOUT_LIMIT := 32
+const ENET_TIMEOUT_MIN_MS := 2000
+const ENET_TIMEOUT_MAX_MS := 4000
 
 var identity: ClientIdentity = null
 var host: String = DEFAULT_HOST
@@ -91,6 +99,11 @@ func _process(delta: float) -> void:
 func _try_join() -> void:
 	attempts += 1
 	_connect_elapsed = 0.0
+	# The handshake server's GameNet sends its own hello on connect (auto_hello, from
+	# --name / --token) unless told not to; this client sends hello itself with the
+	# token from the identity file, so that path is switched off before every join.
+	# Object.set is a no-op on a GameNet that has no such property.
+	GameNet.set("auto_hello", false)
 	var err: Error = GameNet.join(host, port)
 	if err != OK:
 		_fail(error_string(err))
@@ -100,8 +113,19 @@ func _try_join() -> void:
 
 func _on_connected() -> void:
 	ever_connected = true
+	_tighten_enet_timeout()
 	_set_state(State.CONNECTED)
 	_send_hello()
+
+
+func _tighten_enet_timeout() -> void:
+	var enet := multiplayer.multiplayer_peer as ENetMultiplayerPeer
+	if enet == null:
+		return
+	var server_peer: ENetPacketPeer = enet.get_peer(1)
+	if server_peer == null:
+		return
+	server_peer.set_timeout(ENET_TIMEOUT_LIMIT, ENET_TIMEOUT_MIN_MS, ENET_TIMEOUT_MAX_MS)
 
 
 func _send_hello() -> void:
@@ -146,4 +170,5 @@ func _set_state(next: State) -> void:
 	if next == state:
 		return
 	state = next
+	print("[connection] %s %s" % [Time.get_time_string_from_system(), status_text()])
 	state_changed.emit(state)
