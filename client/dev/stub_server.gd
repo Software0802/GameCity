@@ -422,6 +422,6 @@ static func _tile(cell: Vector2i, owner: int, zone: int, tier: int, pollution: f
 
 static func _edge(a: Vector2i, b: Vector2i) -> Dictionary:
 	var edge := WorldState.ordered_edge(a, b)
-	edge.capacity = WorldState.EDGE_CAPACITY
+	edge.capacity = SliceConstants.CONGESTION_CAPACITY
 	edge.congestion = 0.0
 	return edge.to_dict()

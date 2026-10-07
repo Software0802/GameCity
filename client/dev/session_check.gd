@@ -143,7 +143,7 @@ func _check_edges_view() -> void:
 	var pending_edges := session.view_edges_in_block("0,0")
 	_expect(pending_edges.size() == 1, "pending AddEdge visible in block view (got %d)" % pending_edges.size())
 	var delta := WorldState.ordered_edge(Vector2i(3, 3), Vector2i(4, 3))
-	delta.capacity = WorldState.EDGE_CAPACITY
+	delta.capacity = SliceConstants.CONGESTION_CAPACITY
 	_emit(ServerEvent.with_edge_delta(delta))
 	_expect(session.pending_count() == 0, "edge delta acks the AddEdge pending")
 	_expect(session.edge(Vector2i(4, 3), Vector2i(3, 3)) != null, "edge stored under ordered key")
