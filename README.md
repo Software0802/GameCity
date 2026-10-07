@@ -9,7 +9,7 @@ Two-faction light-versus city builder. Godot 4 vertical slice: listen-host comma
 - 2 个阵营，2–4 名玩家。一局约 30–45 分钟后结算。
 - 一局一城：对局数据只在内存里，不把城市存到下一局。
 - 服务器权威模拟。垂直切片允许 listen-host，主机跑同一套模拟。
-- 地图 64×64 格，兴趣区 8×8，道路只走正交四邻。市政服务只有电，切片不做水。
+- 地图 128×128 格（`SliceConstants.MAP_SIZE`），兴趣区 8×8，道路只走正交四邻。市政服务只有电，切片不做水。
 
 权威模拟在 `server/world_state.gd`。ENet 会话在 autoload `GameNet`（`server/net_authority.gd`）。客户端只提交意图；拒绝时丢掉乐观操作。
 
@@ -37,12 +37,18 @@ godot --headless --path . res://server/main.tscn -- --port 24567
 
 光标方向键移动。Enter `ClaimTile`，Z `SetZone R`，E 向右加边，P `PlacePower`，Backspace `DemolishOwn`。
 
-出生地是示例坐标，不是锁定玩法：阵营 A 为 `[0,8) × [0,8)`，阵营 B 为 `[56,64) × [56,64)`。
+出生地是示例坐标，不是锁定玩法，全部由 `MAP_SIZE` 派生（`WorldState.SPAWN_A / SPAWN_B`）：阵营 A 为 `[0,8) × [0,8)`，阵营 B 为 `[MAP_SIZE-8, MAP_SIZE) × [MAP_SIZE-8, MAP_SIZE)`，128 地图上即 `[120,128)²`。
 
-无头自检：
+无头自检（每条都以 `*_OK` 收尾并以 0 退出；失败打印差异并非零退出）：
 
 ```bash
+# 合约：shared/ 每个载荷 to_dict → JSON → from_dict 往返、枚举整型、SET_TAX_RATE 边界 → SHARED_OK
+godot --headless --path . -s res://server/shared_roundtrip_check.gd
+# 权限与解析 → PERMISSION_OK
 godot --headless --path . -s res://server/permission_check.gd
+# 存档：建世界、下指令、跑 tick，to_save_dict → JSON → from_save_dict 逐格逐边逐电站比较 → SAVE_OK
+godot --headless --path . -s res://server/save_roundtrip_check.gd
+# 两进程冒烟：先起 host（后台），再起 smoke client → SMOKE_OK，host 日志出现 MatchEnd: server_stop
 godot --headless --path . res://server/main.tscn -- --port 24671 --smoke-host
 godot --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --port 24671
 ```
