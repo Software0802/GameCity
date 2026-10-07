@@ -210,82 +210,113 @@ func _bench_apply(shot_name: String, base_profile: String, ov: Dictionary) -> vo
 	Quality.apply_viewport(sv, fx)
 	_apply_shot(shot_name)
 
-## Each variant is timed between two reference measurements of the same shot with the tier's default settings.
-## The M4 throttles under sustained load, so only the delta to the neighbouring reference is meaningful.
+## One entry per process (CITY_SHOWCASE_BENCH_ONLY=group/tag) so state never accumulates; tools/run_bench.sh adds
+## cool-down gaps. Inside the process the reference and the variant are timed in alternating rounds
+## (R V V R R V ...), so clock drift on the (passively cooled) M4 hits both equally. The reported ratio is the
+## median of the per-round variant/reference ratios. CITY_SHOWCASE_BENCH_LIST=1 prints the entry names and exits.
 func _run_bench() -> void:
-	var groups := OS.get_environment("CITY_SHOWCASE_BENCH_GROUPS")
-	var only: Array = Array(groups.split(",", false)) if groups != "" else []
+	if OS.get_environment("CITY_SHOWCASE_BENCH_LIST") == "1":
+		for entry in BenchPlan.entries():
+			print("BENCH_ENTRY ", entry[0], "/", entry[1])
+		return
+	var only_entry := OS.get_environment("CITY_SHOWCASE_BENCH_ONLY")
 	var docs_dir := ProjectSettings.globalize_path(Cfg.PACK + "/docs")
 	var cmp_dir := ProjectSettings.globalize_path(Cfg.PREVIEW_DIR + "/compare")
 	DirAccess.make_dir_recursive_absolute(cmp_dir)
 	var res_path := docs_dir + "/bench_results.json"
-	var results := {}
-	if FileAccess.file_exists(res_path):
-		var rf := FileAccess.open(res_path, FileAccess.READ)
-		var parsed = JSON.parse_string(rf.get_as_text())
-		if parsed is Dictionary:
-			results = parsed
 	var crop := Rect2i(700, 330, 640, 360)
-	var settle := int(OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE")) if OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE") != "" else 80
+	var settle := int(OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE")) if OS.get_environment("CITY_SHOWCASE_BENCH_SETTLE") != "" else 70
+	var rounds := 4
 	for entry in BenchPlan.entries():
 		var group: String = entry[0]
-		if not only.is_empty() and not (group in only):
-			continue
 		var tag: String = entry[1]
-		if results.has("%s/%s" % [group, tag]) and OS.get_environment("CITY_SHOWCASE_BENCH_RESUME") == "1":
+		if only_entry != "" and only_entry != "%s/%s" % [group, tag]:
 			continue
 		var shot_name: String = entry[2]
 		var ov: Dictionary = entry[3].duplicate()
 		var base_profile := "interactive" if ov.get("profile", "") == "interactive" else "shot"
 		ov.erase("profile")
-		# reference (before)
-		_bench_apply(shot_name, base_profile, {})
-		await _settle(settle)
-		var ref_a := await _measure_draw(60)
-		# variant
-		_bench_apply(shot_name, base_profile, ov)
-		await _settle(settle)
-		var pm := await _measure(40)
-		var ms := await _measure_draw(60)
-		var rec_vram := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0
-		var rec_calls := Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
-		var rec_prims := Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
-		var mode: String = entry[4]
+		var ref_med: Array = []
+		var var_med: Array = []
+		var ref_min: Array = []
+		var var_min: Array = []
+		var ratios: Array = []
 		var shot_img: Image = null
-		if mode != "":
-			await get_tree().process_frame
-			shot_img = sv.get_texture().get_image()
-		var eff := {"msaa_3d": sv.msaa_3d, "taa": sv.use_taa, "ssaa": sv.screen_space_aa, "scaling_mode": sv.scaling_3d_mode, "scale": sv.scaling_3d_scale}
-		# reference (after)
-		_bench_apply(shot_name, base_profile, {})
-		await _settle(settle)
-		var ref_b := await _measure_draw(60)
-		var ref := (ref_a + ref_b) * 0.5
+		var eff := {}
+		var rec_vram := 0.0
+		var rec_calls := 0.0
+		var rec_prims := 0.0
+		var proc_ms := 0.0
+		for r in rounds:
+			var order: Array = ["ref", "var"] if r % 2 == 0 else ["var", "ref"]
+			var this_ref := 0.0
+			var this_var := 0.0
+			for which in order:
+				_bench_apply(shot_name, base_profile, {} if which == "ref" else ov)
+				await _settle(settle)
+				var m := await _measure_draw2(24)
+				if which == "ref":
+					ref_med.append(m["med"])
+					ref_min.append(m["min"])
+					this_ref = m["med"]
+				else:
+					var_med.append(m["med"])
+					var_min.append(m["min"])
+					this_var = m["med"]
+					rec_vram = Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0
+					rec_calls = Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+					rec_prims = Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)
+					eff = {"msaa_3d": sv.msaa_3d, "taa": sv.use_taa, "ssaa": sv.screen_space_aa, "scaling_mode": sv.scaling_3d_mode, "scale": sv.scaling_3d_scale}
+					if r == rounds - 1 and entry[4] != "":
+						shot_img = sv.get_texture().get_image()
+			ratios.append(this_var / maxf(this_ref, 0.001))
+		var pm := await _measure(30)
+		ratios.sort()
+		ref_med.sort()
+		var_med.sort()
+		var med_ratio: float = (float(ratios[1]) + float(ratios[2])) * 0.5
+		var r_med: float = (float(ref_med[1]) + float(ref_med[2])) * 0.5
+		var v_med: float = (float(var_med[1]) + float(var_med[2])) * 0.5
+		var r_min: float = float(ref_min.min())
+		var v_min: float = float(var_min.min())
 		var row := {"group": group, "tag": tag, "shot": shot_name, "profile": base_profile, "fx": ov, "effective": eff,
-			"draw_ms": snappedf(ms, 0.01), "ref_ms": snappedf(ref, 0.01), "ref_a": snappedf(ref_a, 0.01), "ref_b": snappedf(ref_b, 0.01), "delta_ms": snappedf(ms - ref, 0.01),
+			"med_ms": snappedf(v_med, 0.01), "ref_med_ms": snappedf(r_med, 0.01), "ratio": snappedf(med_ratio, 0.001),
+			"min_ms": snappedf(v_min, 0.01), "ref_min_ms": snappedf(r_min, 0.01),
+			"delta_med_ms": snappedf(v_med - r_med, 0.01), "delta_min_ms": snappedf(v_min - r_min, 0.01),
+			"ratio_rounds": ratios.map(func(x): return snappedf(float(x), 0.001)),
 			"proc_ms": snappedf(pm["proc_ms"], 0.01), "wall_ms": snappedf(pm["wall_ms"], 0.01),
 			"vram_mb": snappedf(rec_vram, 0.1), "draw_calls": rec_calls, "prims": rec_prims}
 		if shot_img != null:
-			if mode == "crop":
+			if entry[4] == "crop":
 				shot_img = shot_img.get_region(crop)
 			else:
 				shot_img.resize(480, 270, Image.INTERPOLATE_LANCZOS)
 			shot_img.save_png("%s/%s_%s.png" % [cmp_dir, group, tag])
 			row["image"] = "compare/%s_%s.png" % [group, tag]
+		var results := {}
+		if FileAccess.file_exists(res_path):
+			var rf := FileAccess.open(res_path, FileAccess.READ)
+			var parsed = JSON.parse_string(rf.get_as_text())
+			if parsed is Dictionary:
+				results = parsed
 		results["%s/%s" % [group, tag]] = row
-		print("[bench] ", group, "/", tag, " ", shot_name, " draw_ms=", row["draw_ms"], " ref=", row["ref_a"], "/", row["ref_b"], " delta=", row["delta_ms"], " calls=", row["draw_calls"], " vram=", row["vram_mb"])
 		var wf := FileAccess.open(res_path, FileAccess.WRITE)
 		wf.store_string(JSON.stringify(results, "\t"))
 		wf.close()
+		print("[bench] ", group, "/", tag, " ", shot_name, " var_med=", row["med_ms"], " ref_med=", row["ref_med_ms"], " ratio=", row["ratio"], " rounds=", row["ratio_rounds"],
+			" calls=", row["draw_calls"], " vram=", row["vram_mb"])
 
-## Throughput without the window's present cap: drive frames with force_draw and flush the GPU at the end.
 func _measure_draw(frames: int) -> float:
-	# Median of 5 chunks of frames/5 draws each, GPU queue drained between chunks: robust against the
-	# M4's clock transients (a plain mean moved by +-5 ms between identical runs).
+	var d := await _measure_draw2(frames)
+	return d["med"]
+
+## 8 chunks of draws with the GPU queue drained between chunks. `min` is the burst figure (least affected by the
+## M4's thermal throttling, used for ablation deltas); `med` is the median chunk.
+func _measure_draw2(frames: int) -> Dictionary:
 	await get_tree().process_frame
 	var chunks: Array = []
-	var per := maxi(frames / 5, 4)
-	for c in 5:
+	var per := maxi(frames / 8, 4)
+	for c in 8:
 		RenderingServer.force_sync()
 		var t0 := Time.get_ticks_usec()
 		for i in per:
@@ -294,7 +325,7 @@ func _measure_draw(frames: int) -> float:
 		var img := sv.get_texture().get_image()   # forces the GPU queue to drain
 		chunks.append(float(Time.get_ticks_usec() - t0) / 1000.0 / float(per))
 	chunks.sort()
-	return chunks[2]
+	return {"min": chunks[0], "med": (chunks[3] + chunks[4]) * 0.5, "max": chunks[7]}
 
 # ---------------------------------------------------------------- interactive
 func _interactive_setup() -> void:

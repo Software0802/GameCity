@@ -31,7 +31,6 @@ static func entries() -> Array:
 	e.append(["fx", "tonemap_aces", hero, {"tonemap": "aces"}, "full"])
 	e.append(["fx", "tonemap_agx", hero, {"tonemap": "agx"}, "full"])
 	e.append(["fx", "tonemap_filmic", hero, {"tonemap": "filmic"}, "full"])
-	e.append(["fx", "tonemap_linear", hero, {"tonemap": "linear"}, "full"])
 	e.append(["fx", "auto_exposure_on", dusk, {"auto_exposure": true}, "full"])
 	e.append(["fx", "auto_exposure_off", dusk, {"auto_exposure": false}, "full"])
 	e.append(["fx", "vfog_on", cine, {"vfog": true}, "full"])
@@ -52,17 +51,15 @@ static func entries() -> Array:
 	# --- anti-aliasing (crop at native resolution)
 	for aa in ["none", "fxaa", "smaa", "taa", "msaa2", "msaa4", "msaa4_taa", "msaa8"]:
 		e.append(["aa", aa, near, {"aa": aa}, "crop"])
-	for aa in ["fsr1", "fsr2", "metalfx_s", "metalfx_t"]:
+	for aa in ["fsr2", "metalfx_t"]:
 		e.append(["aa", aa + "_0.67", near, {"aa": aa, "scale": 0.67}, "crop"])
-	e.append(["aa", "fsr2_0.5", near, {"aa": "fsr2", "scale": 0.5}, "crop"])
-	e.append(["aa", "metalfx_t_0.5", near, {"aa": "metalfx_t", "scale": 0.5}, "crop"])
 	# --- shadows
 	for a in [2048, 4096, 8192]:
 		e.append(["shadow", "atlas_%d" % a, near, {"shadow_atlas": a}, "crop"])
 	e.append(["shadow", "mode_pssm4", near, {"shadow_mode": "pssm4"}, "crop"])
 	e.append(["shadow", "mode_pssm2", near, {"shadow_mode": "pssm2"}, "crop"])
 	e.append(["shadow", "mode_orthogonal", near, {"shadow_mode": "ortho"}, "crop"])
-	for q in ["hard", "low", "high", "ultra"]:
+	for q in ["hard", "high", "ultra"]:
 		e.append(["shadow", "soft_" + q, near, {"soft_shadow": q}, "crop"])
 	e.append(["shadow", "off", hero, {"shadows": false}, ""])
 	# --- dusk lights
@@ -71,8 +68,5 @@ static func entries() -> Array:
 	e.append(["lights", "area_off", "s03_near_block_dusk", {"area_lights": false}, "full"])
 	e.append(["lights", "area_on", "s03_near_block_dusk", {"area_lights": true}, "full"])
 	e.append(["lights", "area_shadows_on", "s03_near_block_dusk", {"area_lights": true, "area_shadows": true}, "full"])
-	# --- all shots in both tiers
-	for sh in ["s01_hero_day", "s01_hero_dusk", "s02_far", "s03_near_block", "s00_cinematic_day", "s00_cinematic_dusk"]:
-		e.append(["shots", "shot_" + sh, sh, {}, ""])
-		e.append(["shots", "interactive_" + sh, sh, {"profile": "interactive"}, ""])
+	# per-shot numbers in both tiers come from tools/perf_shots.sh (one process per shot, TIME_PROCESS + draw_ms)
 	return e

@@ -186,7 +186,8 @@ func setup_voxel_gi(center: Vector3, size: Vector3, subdiv: int, sun: Light3D) -
 		voxel_gi.name = "VoxelGI"
 		root.add_child(voxel_gi)
 	var key := "%s|%s|%d" % [center, size, subdiv]
-	if voxel_gi.visible and voxel_key == key:
+	if voxel_key == key:
+		voxel_gi.visible = true     # same volume already baked: just show it again
 		return
 	voxel_gi.visible = true
 	voxel_gi.global_position = center
@@ -205,4 +206,3 @@ func setup_voxel_gi(center: Vector3, size: Vector3, subdiv: int, sun: Light3D) -
 func disable_voxel_gi() -> void:
 	if voxel_gi != null:
 		voxel_gi.visible = false
-		voxel_key = ""
