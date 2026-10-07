@@ -44,6 +44,8 @@ godot --headless --path . --import
 
 然后跑 README「无头自检」里的命令和 `tests/run_smoke.sh`（存在时）。
 
+合并任何改了 `shared/` 的分支后，集成者在全仓 grep 被删除或改名的符号（包括 `client/assets/techart/**`），再跑一次无头 showcase 构建 `godot --headless --path . --quit-after 300 res://client/techart_showcase.tscn`，要看到 `SHOWCASE_BUILD_OK`。
+
 ## Hand-back 格式
 
 1. 分支名和改动文件列表
