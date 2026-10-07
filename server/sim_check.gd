@@ -49,66 +49,80 @@ func _initialize() -> void:
 # --- Scenarios -----------------------------------------------------------------
 
 
-## Claims along y = 0 until the treasury runs dry: the reject is INSUFFICIENT_FUNDS,
-## the tile stays neutral, nothing else moves. Then edges and plants at low funds.
+## Costs and the INSUFFICIENT_FUNDS reject. The poor faction is built with
+## set_treasury_all() (server-core's --start-treasury seam), not by spending down.
 func _check_funds(errors: Array[String]) -> void:
 	var world = _world()
 	_expect(errors, is_equal_approx(world.treasury(A), float(SliceConstants.START_TREASURY)), "start treasury")
 	var first_cost: float = world.claim_cost(A)
 	var expected_first := float(SliceConstants.COST_CLAIM_BASE) * (1.0 + float(WorldStateScript.SPAWN_SIZE * WorldStateScript.SPAWN_SIZE) * SliceConstants.COST_CLAIM_GROWTH)
 	_expect(errors, is_equal_approx(first_cost, expected_first), "first claim cost %s (got %s)" % [expected_first, first_cost])
-	var claims := 0
-	var spent := 0.0
-	var x := WorldStateScript.SPAWN_SIZE
-	var rejected: Dictionary = {}
-	while x < SliceConstants.MAP_SIZE:
-		var cost: float = world.claim_cost(A)
-		var before: float = world.treasury(A)
-		var owned_before: int = world.owned_count(A)
-		var result: Dictionary = world.apply(A, GameCommand.claim_tile(x, 0))
-		if result["reason"] == ReasonCode.Id.OK:
-			claims += 1
-			spent += cost
-			_expect(errors, is_equal_approx(world.treasury(A), before - cost), "claim %d deducts %s" % [claims, cost])
-			x += 1
-			continue
-		rejected = result
-		_expect(errors, result["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS, "claim reject is INSUFFICIENT_FUNDS (got %d)" % result["reason"])
-		_expect(errors, result["events"].is_empty(), "funds reject has no events")
-		_expect(errors, world.tile_at(x, 0).owner == SliceConstants.Owner.NEUTRAL, "rejected tile stays neutral")
-		_expect(errors, is_equal_approx(world.treasury(A), before), "rejected claim keeps treasury")
-		_expect(errors, world.owned_count(A) == owned_before, "rejected claim keeps owned count")
-		break
-	_expect(errors, not rejected.is_empty(), "treasury eventually runs out")
-	_expect(errors, claims > 0 and world.treasury(A) < world.claim_cost(A), "claims stop exactly when the next one is unaffordable")
-	_perf_note("start treasury %d buys %d claims from the spawn (%.0f spent, %.1f left)" % [SliceConstants.START_TREASURY, claims, spent, world.treasury(A)])
+	_apply_ok(errors, world, A, GameCommand.claim_tile(8, 0), "paid claim")
+	_expect(errors, is_equal_approx(world.treasury(A), float(SliceConstants.START_TREASURY) - first_cost), "claim deducts its cost")
+	_expect(errors, world.claim_cost(A) > first_cost, "next claim costs more")
 
-	# A plant costs COST_POWER; after the claims the treasury is below that.
+	# set_treasury_all: both factions, one cent short of the next claim.
+	var cost: float = world.claim_cost(A)
+	world.set_treasury_all(cost - 0.01)
+	_expect(errors, is_equal_approx(world.treasury(A), cost - 0.01) and is_equal_approx(world.treasury(B), cost - 0.01), "set_treasury_all sets both factions")
+	var owned_before: int = world.owned_count(A)
+	var rejected: Dictionary = world.apply(A, GameCommand.claim_tile(9, 0))
+	_expect(errors, rejected["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS, "claim reject is INSUFFICIENT_FUNDS (got %d)" % rejected["reason"])
+	_expect(errors, rejected["events"].is_empty(), "funds reject has no events")
+	_expect(errors, world.tile_at(9, 0).owner == SliceConstants.Owner.NEUTRAL, "rejected tile stays neutral")
+	_expect(errors, is_equal_approx(world.treasury(A), cost - 0.01), "rejected claim keeps treasury")
+	_expect(errors, world.owned_count(A) == owned_before, "rejected claim keeps owned count")
+	_expect(errors, world.faction_states()[A].treasury < cost, "FactionState shows the low treasury")
+	# Exactly the price is enough and leaves zero.
+	world.set_treasury_all(cost)
+	_apply_ok(errors, world, A, GameCommand.claim_tile(9, 0), "claim at exactly the price")
+	_expect(errors, is_zero_approx(world.treasury(A)) and world.tile_at(9, 0).owner == A, "exact price accepted, treasury zero")
+	# Edges and plants at zero.
+	var edge: Dictionary = world.apply(A, GameCommand.add_edge(Vector2i(1, 0), Vector2i(2, 0)))
+	_expect(errors, edge["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS and world.find_edge(Vector2i(1, 0), Vector2i(2, 0)) == null, "edge rejected when poor")
 	var plant: Dictionary = world.apply(A, GameCommand.place_power(0, 0))
 	_expect(errors, plant["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS and not world.has_power_source(0, 0), "plant rejected when poor")
-	# Edges cost COST_EDGE; spend them down and confirm the first unaffordable one.
-	var left: float = world.treasury(A)
-	var edge_y := 0
-	while left >= float(SliceConstants.COST_EDGE) and edge_y < WorldStateScript.SPAWN_SIZE - 1:
-		var ok: Dictionary = world.apply(A, GameCommand.add_edge(Vector2i(0, edge_y), Vector2i(0, edge_y + 1)))
-		_expect(errors, ok["reason"] == ReasonCode.Id.OK, "edge affordable at %s" % left)
-		left = world.treasury(A)
-		edge_y += 1
-	if left < float(SliceConstants.COST_EDGE):
-		var edge: Dictionary = world.apply(A, GameCommand.add_edge(Vector2i(1, 0), Vector2i(2, 0)))
-		_expect(errors, edge["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS and world.find_edge(Vector2i(1, 0), Vector2i(2, 0)) == null, "edge rejected when poor")
-		_expect(errors, is_equal_approx(world.treasury(A), left), "rejected edge keeps treasury")
-	# Zoning, demolition, and removal stay free.
+	_expect(errors, is_zero_approx(world.treasury(A)), "rejected edge and plant keep treasury")
+	world.set_treasury_all(float(SliceConstants.COST_POWER) - 1.0)
+	plant = world.apply(A, GameCommand.place_power(0, 0))
+	_expect(errors, plant["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS, "plant rejected one short of COST_POWER")
+	world.set_treasury_all(float(SliceConstants.COST_POWER) + float(SliceConstants.COST_EDGE))
+	_apply_ok(errors, world, A, GameCommand.place_power(0, 0), "plant at COST_POWER")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(1, 0), Vector2i(2, 0)), "edge at COST_EDGE")
+	_expect(errors, is_zero_approx(world.treasury(A)), "plant and edge charged exactly")
+	# Zoning, demolition, and removals stay free at zero.
 	var zone: Dictionary = world.apply(A, GameCommand.set_zone(1, 1, SliceConstants.Zone.R))
-	_expect(errors, zone["reason"] == ReasonCode.Id.OK and is_equal_approx(world.treasury(A), left), "zone is free")
+	_expect(errors, zone["reason"] == ReasonCode.Id.OK and is_zero_approx(world.treasury(A)), "zone is free")
 	var demolish: Dictionary = world.apply(A, GameCommand.demolish_own(1, 1))
-	_expect(errors, demolish["reason"] == ReasonCode.Id.OK and is_equal_approx(world.treasury(A), left), "demolish is free")
+	_expect(errors, demolish["reason"] == ReasonCode.Id.OK and is_zero_approx(world.treasury(A)), "demolish is free")
+	_apply_ok(errors, world, A, GameCommand.remove_edge(Vector2i(1, 0), Vector2i(2, 0)), "remove edge is free")
+	_apply_ok(errors, world, A, GameCommand.remove_power(0, 0), "remove plant is free")
+	_expect(errors, is_zero_approx(world.treasury(A)), "removals do not refund")
 	# Eligibility comes before money: a poor faction still gets the rule reject.
 	var spawn_b: Vector2i = WorldStateScript.SPAWN_B
 	var steal: Dictionary = world.apply(A, GameCommand.claim_tile(spawn_b.x, spawn_b.y))
 	_expect(errors, steal["reason"] == ReasonCode.Id.OPPONENT_IMMUTABLE, "eligibility checked before funds")
-	# The other faction is untouched.
-	_expect(errors, is_equal_approx(world.treasury(B), float(SliceConstants.START_TREASURY)), "faction B treasury untouched")
+	var far: Dictionary = world.apply(A, GameCommand.claim_tile(20, 20))
+	_expect(errors, far["reason"] == ReasonCode.Id.NOT_ADJACENT, "adjacency checked before funds")
+	# A negative treasury (upkeep) blocks spending the same way.
+	world.set_treasury_all(-10.0)
+	_expect(errors, world.apply(A, GameCommand.claim_tile(10, 0))["reason"] == ReasonCode.Id.INSUFFICIENT_FUNDS, "negative treasury rejects")
+	# set_treasury_all is not part of the save: a restored world keeps its own values.
+	world.set_treasury_all(123.5)
+	var restored = WorldStateScript.from_save_dict(JSON.parse_string(JSON.stringify(world.to_save_dict())))
+	_expect(errors, restored != null and is_equal_approx(restored.treasury(A), 123.5) and is_equal_approx(restored.treasury(B), 123.5), "restored treasuries come from the save")
+	_perf_note("start treasury %d buys %d claims in a row from the spawn" % [SliceConstants.START_TREASURY, _claims_until_broke()])
+
+
+## How many claims START_TREASURY pays for from faction A's spawn (for the hand-back).
+func _claims_until_broke() -> int:
+	var world = _world()
+	var claims := 0
+	for x in range(WorldStateScript.SPAWN_SIZE, SliceConstants.MAP_SIZE):
+		if world.apply(A, GameCommand.claim_tile(x, 0))["reason"] != ReasonCode.Id.OK:
+			break
+		claims += 1
+	return claims
 
 
 func _check_free_build(errors: Array[String]) -> void:

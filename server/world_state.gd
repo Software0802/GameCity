@@ -173,6 +173,13 @@ func plant_capacity() -> int:
 # --- Seams used by server-core -------------------------------------------------
 
 
+## Both treasuries set to amount. server-core calls this right after
+## WorldState.new() from --start-treasury on a new round; a restored save keeps
+## its own treasuries and does not get this call.
+func set_treasury_all(amount: float) -> void:
+	_economy.set_treasury_all(amount)
+
+
 ## Grid storm on or off. Capacity changes at once; the CrisisEvent
 ## (kind grid_storm, ends_at_unix) goes out with the next sim_tick(). ends_at_unix
 ## defaults to now + CRISIS_DURATION_SEC; pass the scheduler's own end time to keep

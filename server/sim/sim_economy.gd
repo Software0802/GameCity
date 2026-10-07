@@ -84,6 +84,12 @@ func tick(pace: float) -> void:
 		_ledgers[faction].treasury += income_per_sec(faction, pace) * SliceConstants.SIM_TICK_SEC
 
 
+## Sets every faction's treasury (server-core's --start-treasury on a new round).
+func set_treasury_all(amount: float) -> void:
+	for book in _ledgers:
+		book.treasury = amount
+
+
 func add_owned(faction: int, delta: int) -> void:
 	_ledgers[faction].owned += delta
 
