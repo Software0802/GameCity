@@ -3,12 +3,13 @@
 # step, and a SetTaxRate (which the pre-handshake host rejects as UNKNOWN_COMMAND,
 # proving the Reject alert path). This peer is faction B; B's spawn is
 # [MAP_SIZE-8, MAP_SIZE)^2, so the claim at 119,122 touches 120,122.
+# Ortho sizes are metres (CameraRig.TILE = 30 m per tile).
 #   godot --headless --path . res://server/main.tscn -- --port 24681 --smoke-host
 #   godot --path . -- --join 127.0.0.1 --port 24681 --input-script client/dev/scripts/live_smoke.txt \
 #     --screenshot /tmp/gamecity_live.png --screenshot-frames 240
 wait 30
 focus 121 122
-zoom 20
+zoom 600
 wait 10
 tool claim
 click 119 122

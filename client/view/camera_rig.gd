@@ -1,27 +1,41 @@
 class_name CameraRig
 extends Camera3D
 
-## Orthographic micro-oblique camera (25° off vertical, art brief). WASD and screen
-## edges pan, the wheel zooms (ortho size SIZE_MIN..SIZE_MAX), and the look-at target is
-## clamped to the map. block_changed fires when the target's 8×8 block changes so the
-## owner can call GameNet.set_camera_local.
+## Orthographic micro-oblique camera (25° off vertical, art brief). World units are metres,
+## LiveCfg.P (30 m) per game tile; every public entry point speaks tiles and converts.
+## WASD and screen edges pan, the wheel zooms (ortho size SIZE_MIN..SIZE_MAX in metres), and
+## the look-at target is clamped to the map. block_changed fires when the target's 8×8 block
+## changes so the owner can call GameNet.set_camera_local.
+##
+## The camera distance scales with the ortho size so the depth range [near, far] hugs the
+## visible ground and the tallest buildings: directional shadows and SSAO work in that range
+## and the clip planes never cut a tower at the near screen edge.
 
 signal block_changed(block_x: int, block_y: int)
 
+const Cfg := preload("res://client/assets/techart/live/scripts/live_cfg.gd")
+
 const PITCH_DEG := 65.0
-## Distance along the view ray; only clipping depends on it for an orthographic camera.
-const DISTANCE := 150.0
-const SIZE_MIN := 16.0
-const SIZE_MAX := 160.0
-const SIZE_DEFAULT := 40.0
+const TILE := Cfg.P
+## 3 tiles: one lot fills a fifth of the screen height (the showcase near-block shot was 86 m).
+const SIZE_MIN := 3.0 * TILE
+## 160 tiles: the whole 128-tile map with margin.
+const SIZE_MAX := 160.0 * TILE
+const SIZE_DEFAULT := 40.0 * TILE
 const ZOOM_FACTOR := 1.15
-## Tiles per second per unit of ortho size, so on-screen pan speed stays constant.
+## Metres per second per metre of ortho size, so on-screen pan speed stays constant.
 const PAN_PER_SIZE := 0.9
 const EDGE_MARGIN_PX := 14.0
 const NO_TILE := Vector2i(-1, -1)
+## Depth kept between the near plane and the nearest scene point.
+const NEAR_PAD := 60.0
+## Tallest live building (C2 tower, crown and antenna) in metres.
+const SCENE_HEIGHT := 140.0
+## Ground depth span per metre of ortho size at PITCH_DEG: cos(65°) / (2 sin(65°)).
+const DEPTH_PER_SIZE := 0.24
 
-## Point on the ground plane the camera looks at.
-var target: Vector3 = Vector3(SliceConstants.MAP_SIZE * 0.5, 0.0, SliceConstants.MAP_SIZE * 0.5)
+## Point on the ground plane the camera looks at (metres).
+var target: Vector3 = Vector3(Cfg.map_extent() * 0.5, 0.0, Cfg.map_extent() * 0.5)
 var keyboard_pan_enabled := true
 var edge_pan_enabled := true
 ## Panning needs window focus so an unfocused window never drifts. The dev input
@@ -40,8 +54,6 @@ var _pointer := Vector2(-1.0, -1.0)
 func _ready() -> void:
 	projection = Camera3D.PROJECTION_ORTHOGONAL
 	current = true
-	near = 0.05
-	far = DISTANCE * 3.0
 	size = SIZE_DEFAULT
 	var window := get_window()
 	window.mouse_entered.connect(func() -> void: mouse_inside = true)
@@ -50,7 +62,7 @@ func _ready() -> void:
 
 
 func focus_tile(x: int, y: int) -> void:
-	target = Vector3(x + 0.5, 0.0, y + 0.5)
+	target = Cfg.to_world(Vector2i(x, y))
 	_apply()
 
 
@@ -58,13 +70,15 @@ func focus_tile(x: int, y: int) -> void:
 func focus_block(block_x: int, block_y: int) -> void:
 	var half := SliceConstants.INTEREST_BLOCK * 0.5
 	target = Vector3(
-		block_x * SliceConstants.INTEREST_BLOCK + half, 0.0, block_y * SliceConstants.INTEREST_BLOCK + half
+		(block_x * SliceConstants.INTEREST_BLOCK + half) * TILE, 0.0, (block_y * SliceConstants.INTEREST_BLOCK + half) * TILE
 	)
 	_apply()
 
 
+## Ortho size in metres (the vertical extent of the view).
 func set_ortho_size(value: float) -> void:
 	size = clampf(value, SIZE_MIN, SIZE_MAX)
+	_apply()
 
 
 ## Positive steps zoom in.
@@ -79,11 +93,16 @@ func pointer() -> Vector2:
 	return _pointer
 
 
-func current_block() -> Vector2i:
-	var tile := Vector2i(
-		clampi(floori(target.x), 0, SliceConstants.MAP_SIZE - 1),
-		clampi(floori(target.z), 0, SliceConstants.MAP_SIZE - 1)
+## Tile under the look-at target.
+func target_tile() -> Vector2i:
+	return Vector2i(
+		clampi(floori(target.x / TILE), 0, SliceConstants.MAP_SIZE - 1),
+		clampi(floori(target.z / TILE), 0, SliceConstants.MAP_SIZE - 1)
 	)
+
+
+func current_block() -> Vector2i:
+	var tile := target_tile()
 	var block := InterestId.from_tile(tile.x, tile.y)
 	return Vector2i(block.block_x, block.block_y)
 
@@ -98,7 +117,7 @@ func pick_tile(screen: Vector2) -> Vector2i:
 	if t < 0.0:
 		return NO_TILE
 	var hit := origin + normal * t
-	var cell := Vector2i(floori(hit.x), floori(hit.z))
+	var cell := Cfg.to_tile(hit)
 	if not SliceConstants.in_map(cell.x, cell.y):
 		return NO_TILE
 	return cell
@@ -106,7 +125,7 @@ func pick_tile(screen: Vector2) -> Vector2i:
 
 ## Viewport position of a tile center; the dev input script aims synthetic clicks with it.
 func tile_to_screen(cell: Vector2i) -> Vector2:
-	return unproject_position(Vector3(cell.x + 0.5, 0.0, cell.y + 0.5))
+	return unproject_position(Cfg.to_world(cell))
 
 
 func _input(event: InputEvent) -> void:
@@ -155,13 +174,19 @@ func _process(delta: float) -> void:
 
 
 func _apply() -> void:
-	var limit := float(SliceConstants.MAP_SIZE)
+	var limit := Cfg.map_extent()
 	target.x = clampf(target.x, 0.0, limit)
 	target.z = clampf(target.z, 0.0, limit)
 	target.y = 0.0
 	var pitch := deg_to_rad(PITCH_DEG)
+	# nearest scene point: the far-edge ground is DEPTH_PER_SIZE * size deeper, a tower at the
+	# near edge is up to SCENE_HEIGHT * sin(pitch) shallower
+	var reach := size * DEPTH_PER_SIZE + SCENE_HEIGHT
+	var dist := reach + NEAR_PAD
 	rotation_degrees = Vector3(-PITCH_DEG, 0.0, 0.0)
-	position = target + Vector3(0.0, DISTANCE * sin(pitch), DISTANCE * cos(pitch))
+	position = target + Vector3(0.0, dist * sin(pitch), dist * cos(pitch))
+	near = NEAR_PAD
+	far = dist + size * DEPTH_PER_SIZE + 40.0
 	var block := current_block()
 	if block != _block:
 		_block = block

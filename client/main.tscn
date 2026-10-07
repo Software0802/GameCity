@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://client/presentation.gd" id="1_pres"]
 [ext_resource type="Script" path="res://client/view/camera_rig.gd" id="2_camera"]
@@ -7,20 +7,7 @@
 [ext_resource type="Script" path="res://client/connection.gd" id="5_connection"]
 [ext_resource type="Script" path="res://client/ui/toolbar.gd" id="6_toolbar"]
 [ext_resource type="Script" path="res://client/ui/hud.gd" id="7_hud"]
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
-size = Vector2(128, 128)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ground"]
-albedo_color = Color(0.184314, 0.227451, 0.203922, 1)
-roughness = 1.0
-
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 1
-background_color = Color(0.137255, 0.168627, 0.152941, 1)
-ambient_light_source = 2
-ambient_light_color = Color(0.82, 0.87, 0.9, 1)
-ambient_light_energy = 0.7
+[ext_resource type="Script" path="res://client/view/live_lighting.gd" id="8_lighting"]
 
 [node name="Client" type="Node3D"]
 script = ExtResource("1_pres")
@@ -28,27 +15,24 @@ script = ExtResource("1_pres")
 [node name="Camera" type="Camera3D" parent="."]
 projection = 1
 current = true
-size = 40.0
-position = Vector3(4, 136, 67.4)
+size = 1200.0
+position = Vector3(1920, 380, 2095)
 rotation_degrees = Vector3(-65, 0, 0)
 script = ExtResource("2_camera")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
-rotation_degrees = Vector3(-50, -30, 0)
-light_energy = 1.2
+rotation_degrees = Vector3(-47.5, 215, 0)
+light_energy = 3.1
 shadow_enabled = true
-shadow_bias = 0.08
-shadow_normal_bias = 2.5
-directional_shadow_mode = 0
-directional_shadow_max_distance = 400.0
 
 [node name="Env" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
+script = ExtResource("8_lighting")
+sun_path = NodePath("../Sun")
+camera_path = NodePath("../Camera")
 
 [node name="Ground" type="MeshInstance3D" parent="."]
+visible = false
 position = Vector3(64, 0, 64)
-mesh = SubResource("PlaneMesh_ground")
-surface_material_override/0 = SubResource("StandardMaterial3D_ground")
 
 [node name="World" type="Node3D" parent="."]
 script = ExtResource("3_world")

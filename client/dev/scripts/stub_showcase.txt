@@ -2,10 +2,11 @@
 # synthetic mouse input (client/dev/input_script.gd). Run with:
 #   godot --path . -- --stub --input-script client/dev/scripts/stub_showcase.txt \
 #     --screenshot /tmp/gamecity_stub.png --screenshot-frames 200
+# Ortho sizes are metres (CameraRig.TILE = 30 m per tile).
 wait 20
 focus 9 8
-# One wheel notch through the camera's _unhandled_input: 25.3 / 1.15 = ortho size 22.
-zoom 25.3
+# One wheel notch through the camera's _unhandled_input: 759 / 1.15 = ortho size 660 (22 tiles).
+zoom 759
 wheel 1
 # Hold W for 10 frames through Input.parse_input_event, then park the pointer in the
 # top edge margin for 8 frames: both pan the camera up (content slides down from under
