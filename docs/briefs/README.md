@@ -21,6 +21,7 @@ These files archive the locked vertical-slice design. The repo skeleton does not
 - **网络**：服务器权威协议；垂直切片允许 listen-host（主机跑同一套模拟）。
 - **世界**：64×64 地块；兴趣区 8×8 地块；道路图只允许正交（四邻），不允许斜向边。
 - **市政服务**：只有电力。切片不做供水。
+- **画面**（2026-10-07 修订）：程序化中等写实，Forward+ 为工程默认，资产只用 CC0。见 art brief。
 
 ## 非目标
 

@@ -21,7 +21,7 @@ The authoritative sim is `server/world_state.gd`. The ENet session is the `GameN
 
 One Godot project at the repo root. `shared/`, `server/`, and `client/` belong to that project. There is not a separate `project.godot` in each folder.
 
-1. 安装 Godot 4.3 或更新版本（本工程标记为 GL Compatibility）。
+1. 安装 Godot 4.7 或更新版本（工程默认渲染器 Forward+，macOS 走 Metal）。
 2. 项目管理器 → Import → 选中本仓库根目录的 `project.godot`。
 3. 默认主场景是 `res://client/main.tscn`：正交相机（相对竖直偏约 25°）、一块地面占位、左上角对局状态。
 4. 默认 ENet 端口 **24567**（可用 `--port` 覆盖）。主机在大厅等到第二名玩家才 `MatchStart`。主机掉线直接 `MatchEnd`，不迁移主机。
@@ -62,17 +62,17 @@ godot --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --p
 
 M1 中等写实包在 `client/assets/techart/roads_interchange/`。`project.godot` 在仓库根，现有资源使用 `res://client/...`，本包前缀同样是 `res://client/assets/techart/roads_interchange/`。
 
-默认渲染器仍是 GL Compatibility，无头冒烟命令不变。样本的 SSR / SSAO / 玻璃要 Forward+，只在这一次运行里覆盖：
+工程默认渲染器自 2026-10-07 起是 Forward+，样本直接打开即可，无头冒烟命令不变：
 
 ```bash
-godot --path . --rendering-method forward_plus res://client/techart_sample.tscn
+godot --path . res://client/techart_sample.tscn
 # 或
 ./client/run_techart_sample.sh
 ```
 
 `res://client/techart_sample.tscn` 只实例化无 HUD 的 `sample_interchange.tscn`，不替换 `res://client/main.tscn`，也不改 listen-host。势力色和电力色是 overlay 材质，不写进世界 albedo。光照数值见 `client/assets/techart/roads_interchange/docs/LIGHT_PRESETS.md`。
 
-The M1 mid-realism pack lives at `client/assets/techart/roads_interchange/` with `res://` prefix `res://client/assets/techart/roads_interchange/`. The project default stays GL Compatibility. Open the HUD-free sample with `--rendering-method forward_plus` via `res://client/techart_sample.tscn`.
+The M1 mid-realism pack lives at `client/assets/techart/roads_interchange/` with `res://` prefix `res://client/assets/techart/roads_interchange/`. Forward+ is the project default since 2026-10-07. Open the HUD-free sample via `res://client/techart_sample.tscn`.
 
 ## 不要擅自合并或部署 / Do not merge or deploy
 

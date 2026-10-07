@@ -1,8 +1,8 @@
 # Art visual source
 
-归档说明：垂直切片的锁定调色板、风格和镜头表。仓库里没有美术资源。客户端场景里的地面色只是 `#2F3A34` 的占位，不是正式资产。
+归档说明：垂直切片的锁定调色板和镜头表。**2026-10-07 修订**：风格从 low-poly 改为程序化中等写实，渲染器改为 Forward+（负责人志坤决定，预算为零、以 CC0 贴图加程序化几何为路线）。调色板和镜头表不变。M1 中等写实包在 `client/assets/techart/roads_interchange/`，是这条路线的第一份样本。
 
-Palette, style, and shot list are locked. No art assets are in the repo. M01 is optional and is skipped.
+Palette and shot list are locked. Revised 2026-10-07: procedural mid-realism on Forward+ replaces stylized low-poly. M01 is optional and is skipped.
 
 ## 调色板 / Palette
 
@@ -75,12 +75,14 @@ Palette, style, and shot list are locked. No art assets are in the repo. M01 is 
 | negative | 阵营 B `#FF5C7A` |
 | warn | `#F0C93A` |
 
-## 风格 / Style
+## 风格 / Style（2026-10-07 修订）
 
-- 干净的俯视城市。投影用正交，或相对竖直偏 **15–30°** 的微斜（micro-oblique）。二者择一保持统一；骨架相机取正交并偏约 25°。
-- 风格化 low-poly。
-- 建筑高度 **2–3 档 LOD**，对应数据里的 `buildingTier` 0–2。
-- MVP 不放：市民、密集植被、车辆网格。拥堵用边的颜色/脉冲表达，不用车流模型。
+- 相机不变：正交，或相对竖直偏 **15–30°** 的微斜（micro-oblique）。骨架相机取正交并偏约 25°。
+- **程序化中等写实**：建筑、道路、路缘、标线由代码按地块数据生成，材质用 PBR 贴图。资产预算为零，贴图和 HDRI 只用 CC0 来源（Poly Haven、Kenney 等），每个资源在所在包的 `CREDITS.md` 记录出处。
+- 渲染器 **Forward+**，为工程默认。目标机 Apple M4；游戏相机镜头在 1080p 保持可交互帧率，电影镜头不受此限。
+- 建筑高度 **2–3 档**，对应数据里的 `buildingTier` 0–2。立面细节由程序生成，不靠手工模型。
+- 调色板用途不变：RCI 色和阵营色是 overlay、轮廓和徽章，不写进世界材质的 albedo。
+- 街道道具（路灯、树、停放车辆）允许作为程序化点缀。拥堵仍用边的颜色/脉冲表达，不做车流模拟。
 
 ## 镜头表 / Shot list
 
@@ -94,7 +96,7 @@ Palette, style, and shot list are locked. No art assets are in the repo. M01 is 
 
 ## 明确不做
 
-- 不在本仓库提交模型、贴图、动画。
+- 贴图和 HDRI 只提交 CC0 来源，单张不超过 2K，并记录出处。手工建模的模型和动画仍不提交。
 - 不用阵营色涂满建筑来代替 R / C / I。
 - 不画水务设施来消耗 `#4EC8E8`。
-- 不做市民、行道树海、车辆网格。
+- 不做市民，不做车流模拟。
