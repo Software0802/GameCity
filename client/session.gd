@@ -335,16 +335,28 @@ func _apply(event: ServerEvent) -> void:
 			crisis = event.crisis_event
 
 
+## A subscription change also dirties the block's orthogonal neighbours: a seam edge
+## is drawn by whichever side is subscribed, so the neighbour must redraw too.
 func _apply_interest(update: InterestUpdate) -> void:
 	for block in update.add:
 		if block != null:
 			_subscribed[block.key()] = true
-			_dirty_blocks[block.key()] = true
+			_mark_dirty_block_and_neighbours(block)
 	for block in update.remove:
 		if block != null:
 			_subscribed.erase(block.key())
-			_dirty_blocks[block.key()] = true
+			_mark_dirty_block_and_neighbours(block)
 	_forget_outside_subscription()
+
+
+func _mark_dirty_block_and_neighbours(block: InterestId) -> void:
+	_dirty_blocks[block.key()] = true
+	for step in WorldState.ORTHOGONAL:
+		var bx := block.block_x + step.x
+		var by := block.block_y + step.y
+		if bx < 0 or by < 0 or bx >= SliceConstants.BLOCKS_PER_AXIS or by >= SliceConstants.BLOCKS_PER_AXIS:
+			continue
+		_dirty_blocks[InterestId.new(bx, by).key()] = true
 
 
 func _forget_outside_subscription() -> void:

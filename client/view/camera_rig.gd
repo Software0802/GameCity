@@ -24,9 +24,17 @@ const NO_TILE := Vector2i(-1, -1)
 var target: Vector3 = Vector3(SliceConstants.MAP_SIZE * 0.5, 0.0, SliceConstants.MAP_SIZE * 0.5)
 var keyboard_pan_enabled := true
 var edge_pan_enabled := true
+## Panning needs window focus so an unfocused window never drifts. The dev input
+## script turns this off because an unattended run cannot take focus on macOS.
+var require_focus := true
+## Tracked from the window's mouse_entered / mouse_exited; the dev input script sets
+## it because a synthetic pointer is inside the window by construction.
+var mouse_inside := false
 
-var _mouse_inside := false
 var _block := Vector2i(-1, -1)
+## Last pointer position from mouse-motion events (real or synthetic); the edge pan
+## reads this rather than the OS cursor so it sees every event the game saw.
+var _pointer := Vector2(-1.0, -1.0)
 
 
 func _ready() -> void:
@@ -36,8 +44,8 @@ func _ready() -> void:
 	far = DISTANCE * 3.0
 	size = SIZE_DEFAULT
 	var window := get_window()
-	window.mouse_entered.connect(func() -> void: _mouse_inside = true)
-	window.mouse_exited.connect(func() -> void: _mouse_inside = false)
+	window.mouse_entered.connect(func() -> void: mouse_inside = true)
+	window.mouse_exited.connect(func() -> void: mouse_inside = false)
 	_apply()
 
 
@@ -64,6 +72,11 @@ func zoom_steps(steps: int) -> void:
 	if steps == 0:
 		return
 	set_ortho_size(size / pow(ZOOM_FACTOR, steps))
+
+
+## Last pointer position seen by this camera (viewport coordinates).
+func pointer() -> Vector2:
+	return _pointer
 
 
 func current_block() -> Vector2i:
@@ -96,6 +109,11 @@ func tile_to_screen(cell: Vector2i) -> Vector2:
 	return unproject_position(Vector3(cell.x + 0.5, 0.0, cell.y + 0.5))
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_pointer = event.position
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -108,8 +126,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	var dir := Vector2.ZERO
-	var window := get_window()
-	var focused := window.has_focus()
+	var focused := get_window().has_focus() or not require_focus
 	if keyboard_pan_enabled and focused:
 		if Input.is_physical_key_pressed(KEY_W):
 			dir.y -= 1.0
@@ -119,17 +136,16 @@ func _process(delta: float) -> void:
 			dir.x -= 1.0
 		if Input.is_physical_key_pressed(KEY_D):
 			dir.x += 1.0
-	if edge_pan_enabled and focused and _mouse_inside:
-		var mouse := get_viewport().get_mouse_position()
+	if edge_pan_enabled and focused and mouse_inside:
 		var rect := get_viewport().get_visible_rect()
-		if rect.has_point(mouse):
-			if mouse.x < rect.position.x + EDGE_MARGIN_PX:
+		if rect.has_point(_pointer):
+			if _pointer.x < rect.position.x + EDGE_MARGIN_PX:
 				dir.x -= 1.0
-			elif mouse.x > rect.end.x - EDGE_MARGIN_PX:
+			elif _pointer.x > rect.end.x - EDGE_MARGIN_PX:
 				dir.x += 1.0
-			if mouse.y < rect.position.y + EDGE_MARGIN_PX:
+			if _pointer.y < rect.position.y + EDGE_MARGIN_PX:
 				dir.y -= 1.0
-			elif mouse.y > rect.end.y - EDGE_MARGIN_PX:
+			elif _pointer.y > rect.end.y - EDGE_MARGIN_PX:
 				dir.y += 1.0
 	if dir != Vector2.ZERO:
 		dir = dir.normalized() * PAN_PER_SIZE * size * delta

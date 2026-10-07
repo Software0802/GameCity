@@ -135,12 +135,27 @@ func _run() -> void:
 	_expect(BlockView.tile_style(session.view_tile(4, 4))["ring"].is_equal_approx(Palette.UNCLAIMED), "reject restores the unclaimed ring")
 	_expect(near.rebuild_count == near_before + 3, "reject rebuilt block 0,0 for the rollback")
 
-	# Unsubscribing collapses the block back to its summary.
+	# Seam hand-off: the seam edge 7,3-8,3 is drawn by block 0,0 while 1,0 is unsubscribed;
+	# once 1,0 is subscribed it still belongs to 0,0 (a's block). Unsubscribing 0,0 hands
+	# it to 1,0, which must be rebuilt by the neighbour-dirty rule.
+	var open_right := InterestUpdate.new()
+	open_right.add.append(InterestId.new(1, 0))
+	_emit(ServerEvent.with_interest_update(open_right))
+	_expect(_visible(near, "Edges") == 2, "0,0 keeps the seam edge while subscribed")
+	_expect(_visible(neighbour, "Edges") == 0, "1,0 does not duplicate the seam edge")
+
+	# Unsubscribing collapses the block back to its summary and hands the seam edge over.
 	var drop := InterestUpdate.new()
 	drop.remove.append(InterestId.new(0, 0))
 	_emit(ServerEvent.with_interest_update(drop))
 	_expect(_visible(near, "Summary") == 1 and _visible(near, "Rings") == 0, "unsubscribed block collapses to the summary")
 	_expect(near.brownout_count == 0, "brownout count cleared with the detail")
+	_expect(_visible(neighbour, "Edges") == 1, "1,0 draws the seam edge once 0,0 is gone (got %d)" % _visible(neighbour, "Edges"))
+	camera.set_ortho_size(25.3)
+	camera.zoom_steps(1)
+	_expect(is_equal_approx(camera.size, 22.0), "one wheel notch divides the ortho size by 1.15 (got %.2f)" % camera.size)
+	camera.zoom_steps(-1)
+	_expect(is_equal_approx(camera.size, 25.3), "one notch back restores it")
 
 	# Camera: tile -> screen -> tile round trip and zoom clamp.
 	camera.focus_tile(10, 10)

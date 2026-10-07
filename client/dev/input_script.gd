@@ -16,8 +16,10 @@ extends Node
 ##   drag <x0> <y0> <x1> <y1>   press on tile0, move through the Manhattan path, release on tile1
 ##   slider <rate>              press and release on the tax slider at rate
 ##   key <name> <frames>        hold a key (W A S D ...) for frames
+##   edge <left|right|up|down> <frames>   park the pointer in the edge-pan margin for frames
 ##   wheel <steps>              wheel up (steps > 0) or down at the pointer
 ##   print <text>
+##   dump                       print camera target, ortho size, tracked pointer, visible rect, tool
 ## Lines starting with # are comments.
 
 var camera: CameraRig
@@ -34,6 +36,14 @@ var _queue: Array[Callable] = []
 func setup(p_camera: CameraRig, p_toolbar: Toolbar) -> void:
 	camera = p_camera
 	toolbar = p_toolbar
+
+
+## Camera panning is gated on window focus, which an unattended run cannot obtain on
+## macOS (the launching app keeps it); the gate is lifted for the scripted run and the
+## synthetic pointer counts as inside the window. Everything else is the production path.
+func _ready() -> void:
+	camera.require_focus = false
+	camera.mouse_inside = true
 
 
 func load_file(path: String) -> bool:
@@ -115,6 +125,24 @@ func _run(line: String) -> void:
 			_key(keycode, true)
 			_queue.append(func() -> void: _wait = frames)
 			_queue.append(func() -> void: _key(keycode, false))
+		"edge":
+			# Park the pointer in the screen-edge margin for N frames, then return to the centre.
+			var rect := get_viewport().get_visible_rect()
+			var inset := CameraRig.EDGE_MARGIN_PX * 0.5
+			var at := rect.get_center()
+			match parts[1]:
+				"left":
+					at.x = rect.position.x + inset
+				"right":
+					at.x = rect.end.x - inset
+				"up":
+					at.y = rect.position.y + inset
+				"down":
+					at.y = rect.end.y - inset
+			var frames := int(parts[2])
+			_move(at)
+			_queue.append(func() -> void: _wait = frames)
+			_queue.append(func() -> void: _move(rect.get_center()))
 		"wheel":
 			var steps := int(parts[1])
 			var index := MOUSE_BUTTON_WHEEL_UP if steps > 0 else MOUSE_BUTTON_WHEEL_DOWN
@@ -123,6 +151,11 @@ func _run(line: String) -> void:
 				_queue.append(func() -> void: _button(index, false))
 		"print":
 			print("INPUT_SCRIPT " + " ".join(parts.slice(1)))
+		"dump":
+			print("INPUT_SCRIPT dump target=%s size=%.2f pointer=%s rect=%s inside=%s tool=%s" % [
+				camera.target, camera.size, camera.pointer(), get_viewport().get_visible_rect(),
+				camera.mouse_inside, Toolbar.TOOL_NAMES[toolbar.tool]
+			])
 		_:
 			push_error("input script: unknown op %s" % op)
 

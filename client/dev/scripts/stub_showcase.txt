@@ -4,7 +4,15 @@
 #     --screenshot /tmp/gamecity_stub.png --screenshot-frames 200
 wait 20
 focus 9 8
-zoom 22
+# One wheel notch through the camera's _unhandled_input: 25.3 / 1.15 = ortho size 22.
+zoom 25.3
+wheel 1
+# Hold W for 10 frames through Input.parse_input_event, then park the pointer in the
+# top edge margin for 8 frames: both pan the camera up (content slides down from under
+# the crisis banner). The distance scales with frame rate (about 3 tiles at 120 Hz),
+# so this is interaction evidence, not a regression value.
+key W 10
+edge up 8
 wait 10
 # Claim three neutral tiles east of A's spawn; 8,2 touches 7,2, 9,2 touches 8,2.
 tool claim
