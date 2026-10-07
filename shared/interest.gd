@@ -22,3 +22,50 @@ func linear_id() -> int:
 
 func key() -> String:
 	return "%d,%d" % [block_x, block_y]
+
+
+static func from_linear(linear: int) -> InterestId:
+	var axis := SliceConstants.BLOCKS_PER_AXIS
+	return InterestId.new(linear % axis, int(linear / axis))
+
+
+static func from_key(text: String) -> InterestId:
+	var parts := text.split(",")
+	if parts.size() != 2:
+		return InterestId.new()
+	return InterestId.new(int(parts[0]), int(parts[1]))
+
+
+func to_dict() -> Dictionary:
+	return {
+		"block_x": block_x,
+		"block_y": block_y,
+		"linear_id": linear_id(),
+		"key": key(),
+	}
+
+
+## Prefers block coordinates, then linear_id, then "bx,by".
+static func from_dict(data: Dictionary) -> InterestId:
+	if data.has("block_x") or data.has("block_y"):
+		return InterestId.new(int(data.get("block_x", 0)), int(data.get("block_y", 0)))
+	if data.has("linear_id"):
+		return from_linear(int(data["linear_id"]))
+	if data.has("key"):
+		return from_key(str(data["key"]))
+	return InterestId.new()
+
+
+## InterestUpdate entries may be an InterestId, a linear id, a "bx,by" key, or a dict.
+static func from_any(value) -> InterestId:
+	if value is InterestId:
+		return value
+	if value is int:
+		return from_linear(value)
+	if value is float:
+		return from_linear(int(value))
+	if value is String:
+		return from_key(value)
+	if value is Dictionary:
+		return from_dict(value)
+	return InterestId.new()

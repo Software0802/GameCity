@@ -29,9 +29,53 @@ Status: draft interface. Do not treat the skeleton as a working multiplayer buil
 | `tile_delta.gd` | `TileDelta` | 地块增量（v0 为整格快照） |
 | `edge_delta.gd` | `EdgeDelta` | 边增量；`is_orthogonal` |
 | `interest.gd` | `InterestId` | 兴趣区 id（块坐标、线性 id、`"bx,by"`） |
-| `server_event.gd` | `ServerEvent` | 服务器 → 客户端消息种类 |
+| `server_event.gd` | `ServerEvent` | 服务器 → 客户端消息种类与信封 |
+| `command_reject.gd` | `CommandReject` | `Reject`：指令引用、kind、`ReasonCode`、可选说明 |
+| `interest_update.gd` | `InterestUpdate` | 订阅变更 `add[]` / `remove[]` |
+| `region_summary.gd` | `RegionSummary` | 未订阅区域摘要 |
+| `match_start.gd` | `MatchStart` | 对局开始载荷 |
+| `match_end.gd` | `MatchEnd` | 对局结束载荷（胜者） |
+| `score_tick.gd` | `ScoreTick` | 计分快照 |
+| `power_alert.gd` | `PowerAlert` | 电力警报 |
+| `congestion_alert.gd` | `CongestionAlert` | 拥堵警报 |
+| `crisis_event.gd` | `CrisisEvent` | 局中那一次共享危机 |
 
 不要在 `shared/` 里放场景树、RPC 注解实现或 UI。
+
+### Dictionary 往返 / Dictionary round-trip
+
+上表里的载荷提供 `to_dict()` / `from_dict()`，给以后的 `MultiplayerAPI` 用。v0 不调用 RPC，也不创建 peer。
+
+- 键名与脚本字段一致。`kind`、`reason`、`owner`、`zone`、`winner` 用枚举整型。
+- 边的端点写成 `{"x": int, "y": int}`。读入时也接受已经是 `Vector2i` 的值。
+- `InterestId` 写出 `block_x`、`block_y`、`linear_id`、`key`。读入优先块坐标，否则线性 id，否则 `"bx,by"`。
+- `InterestUpdate.add` / `remove` 的元素可以是该字典、线性 id 整数，或 `"bx,by"` 字符串。
+- `ServerEvent` 字典带 `kind`，并带一个与种类同名的载荷键（`tile_delta`、`reject`、`interest_update` 等）。
+- `EdgeDelta.removed == true` 表示这条边被移除，这是 `RemoveEdge` 在线上的权威结果。`TileDelta` 仍是整格快照。
+
+载荷字段（占位数值不代表已经调参）：
+
+| 类型 | 字段 |
+| --- | --- |
+| `CommandReject` | `kind`，`command`（完整 `GameCommand`），`reason`，`detail` |
+| `InterestUpdate` | `add[]`，`remove[]` |
+| `RegionSummary` | `interest`，`population`，`power_alert`，`crisis` |
+| `MatchStart` | `map_size`，`interest_block`，`faction_count`（默认即切片常数） |
+| `MatchEnd` | `winner`（`Owner`；`NEUTRAL` 表示没有阵营胜者，例如主机掉线），`reason` |
+| `ScoreTick` | `tick_index`，`factions[]`（`faction` / `pop` / `fiscal` / `control` / `total`）。`total` 只是锁定权重乘上这三项，不是归一化后的 0–1 分 |
+| `PowerAlert` | `x`，`y`，`power_covered`，`shortage`（缺电） |
+| `CongestionAlert` | `a`，`b`，`congestion` |
+| `CrisisEvent` | `crisis_id`，`active`，`detail`。两边看到同一份 |
+
+`GameCommand.validate_shape()` 只做形状检查，返回 `ReasonCode.Id`：
+
+- 地块或边端点不在 64×64 内 → `OUT_OF_BOUNDS`
+- `zone` 不是 R / C / I / none → `INVALID_ZONE`
+- 边不满足 `|ax-bx| + |ay-by| == 1` → `NOT_ORTHOGONAL`
+- 不认识的 `kind` → `UNKNOWN_COMMAND`
+- 形状合法 → `OK`
+
+所有权、相邻占领、边的两端归属仍由服务器规则判断。规则未写时，进行中的对局继续由 `server/match_sim.gd` 返回 `NOT_IMPLEMENTED`。数据层不执行这些规则。
 
 ## 客户端 → 服务器 / Commands
 

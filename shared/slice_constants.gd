@@ -43,3 +43,8 @@ static func tile_id(x: int, y: int) -> int:
 
 static func in_map(x: int, y: int) -> bool:
 	return x >= 0 and y >= 0 and x < MAP_SIZE and y < MAP_SIZE
+
+
+## True for R, C, I, and none. Any other int is not a zone.
+static func is_zone(zone: int) -> bool:
+	return zone == Zone.NONE or zone == Zone.R or zone == Zone.C or zone == Zone.I

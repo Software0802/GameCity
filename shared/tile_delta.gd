@@ -22,3 +22,29 @@ static func from_cell(cell_x: int, cell_y: int) -> TileDelta:
 	tile.y = cell_y
 	tile.id = SliceConstants.tile_id(cell_x, cell_y)
 	return tile
+
+
+func to_dict() -> Dictionary:
+	return {
+		"id": id,
+		"x": x,
+		"y": y,
+		"owner": owner,
+		"zone": zone,
+		"has_building": has_building,
+		"building_tier": building_tier,
+		"power_covered": power_covered,
+	}
+
+
+static func from_dict(data: Dictionary) -> TileDelta:
+	var tile := TileDelta.new()
+	tile.x = int(data.get("x", 0))
+	tile.y = int(data.get("y", 0))
+	tile.id = int(data.get("id", SliceConstants.tile_id(tile.x, tile.y)))
+	tile.owner = int(data.get("owner", SliceConstants.Owner.NEUTRAL))
+	tile.zone = int(data.get("zone", SliceConstants.Zone.NONE))
+	tile.has_building = bool(data.get("has_building", false))
+	tile.building_tier = int(data.get("building_tier", 0))
+	tile.power_covered = bool(data.get("power_covered", false))
+	return tile
