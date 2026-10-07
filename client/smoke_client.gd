@@ -5,6 +5,12 @@ extends Node
 
 const DEADLINE_MS := 20000
 const JOIN_RETRY_MS := 2000
+## This peer is faction B. Its targets derive from B's spawn corner, never a literal:
+## CLAIM_B is the neutral tile just west of the corner; EDGE_B spans the corner tile
+## and its east neighbor, both inside the spawn.
+const CLAIM_B: Vector2i = WorldState.SPAWN_B + Vector2i(-1, 0)
+const EDGE_B_A: Vector2i = WorldState.SPAWN_B
+const EDGE_B_B: Vector2i = WorldState.SPAWN_B + Vector2i(1, 0)
 
 var session: ClientSession
 var _deadline_ms: int = 0
@@ -70,17 +76,17 @@ func _check() -> void:
 	if session.match_started and not _commands_sent:
 		_commands_sent = true
 		GameNet.set_camera_local(0, 0)
-		session.send_command(GameCommand.claim_tile(55, 56))
+		session.send_command(GameCommand.claim_tile(CLAIM_B.x, CLAIM_B.y))
 		session.send_command(GameCommand.claim_tile(0, 0))
-		session.send_command(GameCommand.set_zone(55, 56, SliceConstants.Zone.C))
-		session.send_command(GameCommand.add_edge(Vector2i(56, 56), Vector2i(57, 56)))
+		session.send_command(GameCommand.set_zone(CLAIM_B.x, CLAIM_B.y, SliceConstants.Zone.C))
+		session.send_command(GameCommand.add_edge(EDGE_B_A, EDGE_B_B))
 		session.send_command(GameCommand.add_edge(Vector2i(0, 0), Vector2i(0, 1)))
 	if not _commands_sent or session.match_end == null:
 		return
 	var spawn: TileDelta = session.tile(0, 0)
-	var claimed: TileDelta = session.tile(55, 56)
+	var claimed: TileDelta = session.tile(CLAIM_B.x, CLAIM_B.y)
 	var host_edge: EdgeDelta = session.edge(Vector2i(0, 0), Vector2i(1, 0))
-	var own_edge: EdgeDelta = session.edge(Vector2i(56, 56), Vector2i(57, 56))
+	var own_edge: EdgeDelta = session.edge(EDGE_B_A, EDGE_B_B)
 	if spawn == null or spawn.zone != SliceConstants.Zone.R:
 		return
 	if host_edge == null or host_edge.removed:
@@ -108,7 +114,7 @@ func _check() -> void:
 		_fail = "winner %s" % session.match_end.winner
 		_finish(1)
 		return
-	if session.match_end.reason != "host_drop":
+	if session.match_end.reason != MatchEnd.REASON_SERVER_STOP:
 		_fail = "reason %s" % session.match_end.reason
 		_finish(1)
 		return
@@ -126,20 +132,22 @@ func _check() -> void:
 
 func _debug_state() -> String:
 	var spawn: TileDelta = session.tile(0, 0)
-	var claimed: TileDelta = session.tile(55, 56)
+	var claimed: TileDelta = session.tile(CLAIM_B.x, CLAIM_B.y)
 	var zone0 := -1 if spawn == null else spawn.zone
-	var owner55 := -99 if claimed == null else claimed.owner
-	var zone55 := -1 if claimed == null else claimed.zone
+	var owner_claim := -99 if claimed == null else claimed.owner
+	var zone_claim := -1 if claimed == null else claimed.zone
 	var end_reason := ""
 	if session.match_end != null:
 		end_reason = session.match_end.reason
-	return "timeout match=%s zone0=%s owner55=%s zone55=%s edgeA=%s edgeB=%s rejects=%d end=%s pending=%d" % [
+	return "timeout match=%s zone0=%s owner%s=%s zone%s=%s edgeA=%s edgeB=%s rejects=%d end=%s pending=%d" % [
 		session.match_started,
 		zone0,
-		owner55,
-		zone55,
+		CLAIM_B,
+		owner_claim,
+		CLAIM_B,
+		zone_claim,
 		session.edge(Vector2i(0, 0), Vector2i(1, 0)) != null,
-		session.edge(Vector2i(56, 56), Vector2i(57, 56)) != null,
+		session.edge(EDGE_B_A, EDGE_B_B) != null,
 		session.rejects.size(),
 		end_reason,
 		session.pending_count(),

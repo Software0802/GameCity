@@ -1,7 +1,8 @@
 class_name InterestId
 extends RefCounted
 
-## Interest region id. Map is 64×64 tiles; one region is 8×8 tiles (64 regions).
+## Interest region id. Map is MAP_SIZE×MAP_SIZE tiles; one region is INTEREST_BLOCK×INTEREST_BLOCK
+## tiles, so there are BLOCKS_PER_AXIS² regions (16×16 = 256 at MAP_SIZE 128).
 
 var block_x: int = 0
 var block_y: int = 0

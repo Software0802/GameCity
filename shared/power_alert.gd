@@ -1,13 +1,15 @@
 class_name PowerAlert
 extends RefCounted
 
-## Power notice for one tile: coverage changed, or the tile is short of power.
-## This is not a second power ruleset. powerCovered is still written by the sim tick.
+## Power notice for one tile: coverage changed, the tile is short of power, or the
+## covering plant is over capacity (brownout). This is not a second power ruleset;
+## power_covered and brownout are still written by the sim tick.
 
 var x: int = 0
 var y: int = 0
 var power_covered: bool = false
 var shortage: bool = false
+var brownout: bool = false
 
 
 func to_dict() -> Dictionary:
@@ -16,6 +18,7 @@ func to_dict() -> Dictionary:
 		"y": y,
 		"power_covered": power_covered,
 		"shortage": shortage,
+		"brownout": brownout,
 	}
 
 
@@ -25,4 +28,5 @@ static func from_dict(data: Dictionary) -> PowerAlert:
 	alert.y = int(data.get("y", 0))
 	alert.power_covered = bool(data.get("power_covered", false))
 	alert.shortage = bool(data.get("shortage", false))
+	alert.brownout = bool(data.get("brownout", false))
 	return alert

@@ -3,6 +3,7 @@ extends RefCounted
 
 ## Server → client envelope. Kind values match docs/briefs/netcode-interface-v0.md.
 ## Exactly one payload field is set for a given kind. No simulation here.
+## New kinds are appended so existing wire ints stay stable.
 
 enum Kind {
 	MATCH_START,
@@ -16,6 +17,8 @@ enum Kind {
 	REJECT,
 	INTEREST_UPDATE,
 	REGION_SUMMARY,
+	WELCOME,
+	FACTION_STATE,
 }
 
 var kind: Kind = Kind.MATCH_START
@@ -30,6 +33,8 @@ var match_end: MatchEnd = null
 var reject: CommandReject = null
 var interest_update: InterestUpdate = null
 var region_summary: RegionSummary = null
+var welcome: ServerWelcome = null
+var faction_state: FactionState = null
 
 
 static func with_match_start(body: MatchStart) -> ServerEvent:
@@ -109,6 +114,20 @@ static func with_region_summary(body: RegionSummary) -> ServerEvent:
 	return event
 
 
+static func with_welcome(body: ServerWelcome) -> ServerEvent:
+	var event := ServerEvent.new()
+	event.kind = Kind.WELCOME
+	event.welcome = body
+	return event
+
+
+static func with_faction_state(body: FactionState) -> ServerEvent:
+	var event := ServerEvent.new()
+	event.kind = Kind.FACTION_STATE
+	event.faction_state = body
+	return event
+
+
 func to_dict() -> Dictionary:
 	var data := {"kind": int(kind)}
 	match kind:
@@ -145,6 +164,12 @@ func to_dict() -> Dictionary:
 		Kind.REGION_SUMMARY:
 			if region_summary != null:
 				data["region_summary"] = region_summary.to_dict()
+		Kind.WELCOME:
+			if welcome != null:
+				data["welcome"] = welcome.to_dict()
+		Kind.FACTION_STATE:
+			if faction_state != null:
+				data["faction_state"] = faction_state.to_dict()
 	return data
 
 
@@ -185,4 +210,10 @@ static func from_dict(data: Dictionary) -> ServerEvent:
 		Kind.REGION_SUMMARY:
 			if data.get("region_summary") is Dictionary:
 				event.region_summary = RegionSummary.from_dict(data["region_summary"])
+		Kind.WELCOME:
+			if data.get("welcome") is Dictionary:
+				event.welcome = ServerWelcome.from_dict(data["welcome"])
+		Kind.FACTION_STATE:
+			if data.get("faction_state") is Dictionary:
+				event.faction_state = FactionState.from_dict(data["faction_state"])
 	return event

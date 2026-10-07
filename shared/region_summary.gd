@@ -8,6 +8,10 @@ var interest: InterestId = null
 var population: int = 0
 var power_alert: bool = false
 var crisis: bool = false
+## Mean tile pollution in the region, 0–1.
+var pollution_avg: float = 0.0
+## True when any tile in the region is in brownout.
+var brownout: bool = false
 
 
 func to_dict() -> Dictionary:
@@ -19,6 +23,8 @@ func to_dict() -> Dictionary:
 		"population": population,
 		"power_alert": power_alert,
 		"crisis": crisis,
+		"pollution_avg": pollution_avg,
+		"brownout": brownout,
 	}
 
 
@@ -32,4 +38,6 @@ static func from_dict(data: Dictionary) -> RegionSummary:
 	summary.population = int(data.get("population", 0))
 	summary.power_alert = bool(data.get("power_alert", false))
 	summary.crisis = bool(data.get("crisis", false))
+	summary.pollution_avg = float(data.get("pollution_avg", 0.0))
+	summary.brownout = bool(data.get("brownout", false))
 	return summary

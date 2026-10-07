@@ -1,8 +1,11 @@
 class_name TileDelta
 extends RefCounted
 
-## Full tile snapshot used as the v0 TileDelta.
-## tile{ id, x, y, owner, zone, hasBuilding, buildingTier, powerCovered }
+## Full tile snapshot used as the TileDelta.
+## tile{ id, x, y, owner, zone, hasBuilding, buildingTier, powerCovered,
+##       satisfaction, pollution, brownout }
+## power_covered means "inside some plant's radius". Actual power =
+## power_covered and not brownout.
 
 var id: int = -1
 var x: int = 0
@@ -15,6 +18,12 @@ var has_building: bool = false
 ## 0–2. See SliceConstants.BUILDING_TIER_*.
 var building_tier: int = 0
 var power_covered: bool = false
+## 0–1, quantized to 1/FIELD_QUANT by the sim before it is sent.
+var satisfaction: float = 0.0
+## 0–1, quantized to 1/FIELD_QUANT by the sim before it is sent.
+var pollution: float = 0.0
+## True while the covering plant is over capacity.
+var brownout: bool = false
 
 static func from_cell(cell_x: int, cell_y: int) -> TileDelta:
 	var tile := TileDelta.new()
@@ -34,6 +43,9 @@ func to_dict() -> Dictionary:
 		"has_building": has_building,
 		"building_tier": building_tier,
 		"power_covered": power_covered,
+		"satisfaction": satisfaction,
+		"pollution": pollution,
+		"brownout": brownout,
 	}
 
 
@@ -47,4 +59,7 @@ static func from_dict(data: Dictionary) -> TileDelta:
 	tile.has_building = bool(data.get("has_building", false))
 	tile.building_tier = int(data.get("building_tier", 0))
 	tile.power_covered = bool(data.get("power_covered", false))
+	tile.satisfaction = float(data.get("satisfaction", 0.0))
+	tile.pollution = float(data.get("pollution", 0.0))
+	tile.brownout = bool(data.get("brownout", false))
 	return tile

@@ -11,8 +11,16 @@ extends Node3D
 @onready var camera: Camera3D = $Camera
 @onready var label: Label = $Hud/StubLabel
 
+## Starting cursors sit on the first neutral tile outside each spawn corner,
+## derived from the spawn constants rather than written as literals.
+const CURSOR_A: Vector2i = WorldState.SPAWN_A + Vector2i(WorldState.SPAWN_SIZE, 0)
+const CURSOR_B: Vector2i = WorldState.SPAWN_B + Vector2i(-1, 0)
+## Camera distance as a fraction of the map edge; only clipping depends on it for an
+## orthographic camera.
+const CAMERA_DIST_PER_TILE := 0.875
+
 var session: ClientSession
-var cursor := Vector2i(8, 0)
+var cursor: Vector2i = CURSOR_A
 var _camera_block := Vector2i(-1, -1)
 
 
@@ -38,7 +46,7 @@ func _frame_map() -> void:
 	var map_size := float(SliceConstants.MAP_SIZE)
 	var target := Vector3(map_size * 0.5, 0.0, map_size * 0.5)
 	var pitch_deg := 65.0
-	var dist := 56.0
+	var dist := map_size * CAMERA_DIST_PER_TILE
 	var pitch := deg_to_rad(pitch_deg)
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.current = true
@@ -85,9 +93,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _on_faction(assigned: int) -> void:
 	if assigned == SliceConstants.Owner.FACTION_B:
-		cursor = Vector2i(55, 56)
+		cursor = CURSOR_B
 	else:
-		cursor = Vector2i(8, 0)
+		cursor = CURSOR_A
 	_refresh_label()
 
 

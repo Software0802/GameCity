@@ -1,5 +1,41 @@
 # Netcode interface v0
 
+## v1 变更（2026-10-08）
+
+M2 wave 0 按 [docs/plans/m2-city-phase.md](../plans/m2-city-phase.md)「合约」一节修改了 `shared/`。`SliceConstants.PROTOCOL_VERSION = 1`。下文 v0 正文中与本节冲突的地方以本节为准；没提到的保持不变。
+
+**地图**：`MAP_SIZE` 64 → **128**，`INTEREST_BLOCK` 仍 8，`BLOCKS_PER_AXIS` 派生为 16（256 个兴趣区）。`tile_id = y * MAP_SIZE + x`。出生地由常量派生：A 为 `[0,8)²`，B 为 `[MAP_SIZE-8, MAP_SIZE)²`（`WorldState.SPAWN_A / SPAWN_B`）。
+
+**新增消息**（`ServerEvent.Kind` 末尾追加，现有整型不变）：
+
+| 消息 | 脚本 | 字段 | 路由 |
+| --- | --- | --- | --- |
+| 客户端 → 服务器 `hello_rpc(dict)` | `client_hello.gd` `ClientHello` | `token`（可空）、`name`（1–24 字符，`ClientHello.is_valid_name`）、`protocol` | 连上后的第一条消息 |
+| `WELCOME` | `server_welcome.gd` `ServerWelcome` | `token`、`player_id`、`faction`、`name`、`returning` | 该连接收到的第一条事件；字典键 `welcome` |
+| `FACTION_STATE` | `faction_state.gd` `FactionState` | `faction`、`treasury`、`income_per_sec`、`population`、`jobs`、`technicians`（M2 恒 0）、`tax_rate`、`demand_r / demand_c / demand_i`（−1..1）、`power_capacity`、`power_load` | 只发给该阵营的玩家，不是全局事件，也不按兴趣区路由；字典键 `faction_state` |
+
+握手顺序：连接 → `hello_rpc` → `WELCOME` → `MATCH_START` → 兴趣区快照。`WELCOME` 之前的指令一律 `NOT_AUTHENTICATED`。
+
+**新增指令**：`GameCommand.Kind.SET_TAX_RATE`，字段 `rate: float`，工厂 `GameCommand.set_tax_rate(rate)`。阵营级指令，地块与边字段不用。`validate_shape()`：`rate` 不在 `[TAX_RATE_MIN, TAX_RATE_MAX]`（或非有限数）→ `INVALID_RATE`。
+
+**新增原因码**（末尾追加）：`INSUFFICIENT_FUNDS`、`INVALID_RATE`、`NOT_AUTHENTICATED`。
+
+**现有载荷新增字段**：
+
+| 类型 | 新增 |
+| --- | --- |
+| `TileDelta` | `satisfaction: float`（0–1，按 1/`FIELD_QUANT` 量化）、`pollution: float`（同上）、`brownout: bool`。`power_covered` 仍是"在某电站半径内"；实际有电 = `power_covered and not brownout` |
+| `MatchStart` | `round_seconds`、`round_ends_at_unix`、`server_unix`、`pace` |
+| `ScoreTick` | 顶层 `seconds_remaining: int`；`FactionScore` 的 `pop / fiscal / control` 现在是归一化 0–1，新增 `pop_raw / fiscal_raw / control_raw` 给 HUD。归一化公式 `ScoreTick.share(own, other)`：每项先 `max(0, 值)`，再 己方 / (己方 + 对方)，双方都为 0 取 0.5。`total` 因此也是 0–1 |
+| `MatchEnd` | `final_scores: ScoreTick`（可空，空时写 `{}`）。`reason` 取值 `clock`、`server_stop`；**`host_drop` 改名为 `server_stop`**。常量 `MatchEnd.REASON_CLOCK / REASON_SERVER_STOP` |
+| `CrisisEvent` | `kind: String`（M2 为 `grid_storm`，常量 `CrisisEvent.KIND_GRID_STORM`）、`ends_at_unix: int` |
+| `PowerAlert` | `brownout: bool` |
+| `RegionSummary` | `pollution_avg: float`、`brownout: bool` |
+
+**常量**：`SliceConstants` 新增轮次（`ROUND_SECONDS_DEFAULT / ROUND_SECONDS_TEST / PACE_DEFAULT`）、版本（`SAVE_FORMAT_VERSION / PROTOCOL_VERSION`）、`FIELD_QUANT`、经济 / 成长 / 危机占位数值，`POWER_RADIUS_SUGGESTED` 改名 `POWER_RADIUS`，删除 `MATCH_MINUTES_*`。
+
+**存档**：`WorldState.to_save_dict()` / `WorldState.from_save_dict(d)`（静态工厂，`map_size` 不符返回 `null`）。字典全部 JSON 可序列化，走 `to_dict()` 链，不用 `var_to_bytes`。`JSON.stringify` 默认不是全精度，需要精确浮点时传 `full_precision = true`。
+
 归档说明：协议草案 v0。`shared/` 放纯数据，`server/` 目前只保留对局生命周期入口。本文件描述要接的接口，不是已经实现的联网。
 
 Status: draft interface. Listen-host transport for this slice lives in `server/net_authority.gd` (autoload `GameNet`). Default ENet port **24567**. The rules below stay the contract.
