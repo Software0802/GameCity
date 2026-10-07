@@ -1,0 +1,9 @@
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3]
+
+[ext_resource type="Texture2D" path="res://client/assets/techart/roads_interchange/textures/tree_bark.png" id="1_alb"]
+
+[resource]
+resource_name = "mat_tree_bark"
+albedo_texture = ExtResource("1_alb")
+roughness = 0.92
+uv1_scale = Vector3(1, 3, 1)

@@ -58,6 +58,22 @@ godot --headless --path . res://client/smoke_client.tscn -- --join 127.0.0.1 --p
 
 设计索引：[docs/briefs/README.md](docs/briefs/README.md)
 
+## 道路立交样本 / Roads interchange sample
+
+M1 中等写实包在 `client/assets/techart/roads_interchange/`。`project.godot` 在仓库根，现有资源使用 `res://client/...`，本包前缀同样是 `res://client/assets/techart/roads_interchange/`。
+
+默认渲染器仍是 GL Compatibility，无头冒烟命令不变。样本的 SSR / SSAO / 玻璃要 Forward+，只在这一次运行里覆盖：
+
+```bash
+godot --path . --rendering-method forward_plus res://client/techart_sample.tscn
+# 或
+./client/run_techart_sample.sh
+```
+
+`res://client/techart_sample.tscn` 只实例化无 HUD 的 `sample_interchange.tscn`，不替换 `res://client/main.tscn`，也不改 listen-host。势力色和电力色是 overlay 材质，不写进世界 albedo。光照数值见 `client/assets/techart/roads_interchange/docs/LIGHT_PRESETS.md`。
+
+The M1 mid-realism pack lives at `client/assets/techart/roads_interchange/` with `res://` prefix `res://client/assets/techart/roads_interchange/`. The project default stays GL Compatibility. Open the HUD-free sample with `--rendering-method forward_plus` via `res://client/techart_sample.tscn`.
+
 ## 不要擅自合并或部署 / Do not merge or deploy
 
 在负责人志坤明确批准之前，不要把本变更合并进 `main`，不要部署，不要导出正式包。

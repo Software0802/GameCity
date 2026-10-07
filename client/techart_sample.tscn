@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://client/assets/techart/roads_interchange/scenes/sample_interchange.tscn" id="1_sample"]
+
+[node name="TechartSample" type="Node"]
+
+[node name="SampleInterchange" parent="." instance=ExtResource("1_sample")]

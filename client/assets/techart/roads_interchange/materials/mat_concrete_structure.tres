@@ -1,0 +1,15 @@
+[gd_resource type="StandardMaterial3D" load_steps=3 format=3]
+
+[ext_resource type="Texture2D" path="res://client/assets/techart/roads_interchange/textures/concrete_albedo.png" id="1_alb"]
+[ext_resource type="Texture2D" path="res://client/assets/techart/roads_interchange/textures/concrete_normal.png" id="2_nrm"]
+
+[resource]
+resource_name = "mat_concrete_structure"
+albedo_texture = ExtResource("1_alb")
+metallic = 0.0
+roughness = 0.82
+normal_enabled = true
+normal_scale = 0.55
+normal_texture = ExtResource("2_nrm")
+uv1_scale = Vector3(3, 3, 3)
+texture_filter = 5

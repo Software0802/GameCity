@@ -1,0 +1,10 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "mat_vehicle_blue"
+albedo_color = Color(0.14, 0.32, 0.58, 1)
+metallic = 0.65
+roughness = 0.28
+clearcoat_enabled = true
+clearcoat = 0.55
+clearcoat_roughness = 0.12

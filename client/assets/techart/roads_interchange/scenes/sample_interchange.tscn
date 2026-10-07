@@ -1,0 +1,76 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://client/assets/techart/roads_interchange/scripts/sample_interchange.gd" id="1_script"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
+sky_top_color = Color(0.35, 0.55, 0.85, 1)
+sky_horizon_color = Color(0.72, 0.82, 0.92, 1)
+ground_bottom_color = Color(0.25, 0.28, 0.22, 1)
+ground_horizon_color = Color(0.55, 0.62, 0.55, 1)
+sun_angle_max = 30.0
+sun_curve = 0.15
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMat")
+
+[sub_resource type="Environment" id="Environment_env"]
+background_mode = 2
+sky = SubResource("Sky")
+ambient_light_source = 3
+ambient_light_color = Color(0.78, 0.84, 0.95, 1)
+ambient_light_sky_contribution = 0.75
+ambient_light_energy = 0.55
+tonemap_mode = 3
+tonemap_exposure = 1.0
+ssr_enabled = true
+ssr_max_steps = 64
+ssr_fade_in = 0.15
+ssr_fade_out = 2.0
+ssr_depth_tolerance = 0.2
+ssao_enabled = true
+ssao_radius = 1.35
+ssao_intensity = 1.8
+ssao_power = 1.5
+ssil_enabled = false
+glow_enabled = true
+glow_intensity = 0.35
+glow_bloom = 0.08
+glow_hdr_threshold = 0.9
+adjustment_enabled = true
+adjustment_contrast = 1.06
+adjustment_saturation = 1.08
+
+[node name="SampleInterchange" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_env")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 14, 36, 10)
+light_color = Color(1, 0.97, 0.92, 1)
+light_energy = 1.55
+light_specular = 0.85
+shadow_enabled = true
+directional_shadow_mode = 0
+directional_shadow_max_distance = 160.0
+directional_shadow_pancake_size = 4.0
+shadow_bias = 0.02
+shadow_normal_bias = 1.5
+shadow_blur = 1.25
+
+[node name="CameraS01" type="Camera3D" parent="."]
+transform = Transform3D(0.899508, 0.183436, -0.396530, -0.000000, 0.907591, 0.419855, 0.436904, -0.377663, 0.816386, 0.500, 12.500, 17.500)
+fov = 42.0
+near = 0.15
+far = 220.0
+current = true
+
+[node name="CameraS02" type="Camera3D" parent="."]
+transform = Transform3D(0.975790, 0.119983, -0.182863, -0.000000, 0.836092, 0.548589, 0.218711, -0.535307, 0.815850, 2.500, 22.500, 29.000)
+fov = 45.0
+near = 0.15
+far = 280.0
+current = false
+
+[node name="World" type="Node3D" parent="."]
