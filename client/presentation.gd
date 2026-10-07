@@ -1,115 +1,198 @@
 extends Node3D
 
-## Camera and a thin command surface. Rules stay on the listen-host.
-## H host, J join 127.0.0.1, arrows move the cursor, Enter claims,
-## Z sets zone R, E adds an edge to +X, P places power, Backspace demolishes.
-## The cursor is the player view. After MatchStart, its 8×8 block is sent
-## with set_camera_local so the camera interest follows that view.
-##   godot --path . -- --listen
-##   godot --path . -- --join 127.0.0.1
+## Client entry (res://client/main.tscn). Wires the session mirror, the transport
+## and handshake, the camera, mouse picking, the toolbar, the HUD, and the per-block
+## view. Rules stay on the server; this node only forwards intents.
+##
+##   godot --path . -- --join 127.0.0.1 --port 24567 --name alice
+##   godot --path . -- --stub --screenshot /tmp/stub.png --input-script client/dev/scripts/stub_showcase.txt
+##
+##   --join <host> --port <p>     server (default 127.0.0.1:24567)
+##   --name <n>                   display name; default: identity file, else player-xxxx
+##   --identity <path>            identity file (default user://identity.cfg; --stub uses user://identity_stub.cfg)
+##   --stub                       no network: client/dev/stub_server.gd feeds the session
+##   --screenshot <path>          save the viewport N frames after MatchStart, then quit
+##   --screenshot-frames <n>      N above (default 150)
+##   --screenshot-seconds <s>     wall-clock delay after MatchStart instead of frames
+##   --input-script <path>        replay synthetic input (client/dev/input_script.gd)
 
-@onready var camera: Camera3D = $Camera
-@onready var label: Label = $Hud/StubLabel
+const SCREENSHOT_FRAMES_DEFAULT := 150
+const STUB_IDENTITY_PATH := "user://identity_stub.cfg"
 
-## Starting cursors sit on the first neutral tile outside each spawn corner,
-## derived from the spawn constants rather than written as literals.
-const CURSOR_A: Vector2i = WorldState.SPAWN_A + Vector2i(WorldState.SPAWN_SIZE, 0)
-const CURSOR_B: Vector2i = WorldState.SPAWN_B + Vector2i(-1, 0)
-## Camera distance as a fraction of the map edge; only clipping depends on it for an
-## orthographic camera.
-const CAMERA_DIST_PER_TILE := 0.875
+@onready var camera: CameraRig = $Camera
+@onready var world: WorldView = $World
+@onready var play_input: PlayInput = $Input
+@onready var connection: ClientConnection = $Connection
+@onready var toolbar: Toolbar = $Hud/Toolbar
+@onready var hud: Hud = $Hud/Panels
+@onready var ground: MeshInstance3D = $Ground
 
 var session: ClientSession
-var cursor: Vector2i = CURSOR_A
+var identity: ClientIdentity
+var stub: StubServer = null
+var input_script: InputScript = null
+
+var _screenshot_path := ""
+var _screenshot_frames := SCREENSHOT_FRAMES_DEFAULT
+## Negative means "count frames instead".
+var _screenshot_seconds := -1.0
+var _frames_since_start := -1
+var _seconds_since_start := 0.0
+var _screenshot_taken := false
+var _focused_once := false
 var _camera_block := Vector2i(-1, -1)
+var _camera_block_sent := Vector2i(-1, -1)
+var _was_started := false
 
 
 func _ready() -> void:
-	_frame_map()
+	get_viewport().msaa_3d = Viewport.MSAA_2X
+	_size_ground()
 	session = ClientSession.new()
 	session.name = "Session"
-	session.updated.connect(_refresh_label)
 	add_child(session)
-	GameNet.faction_assigned.connect(_on_faction)
-	if GameNet.has_flag("--listen"):
-		var err := GameNet.host(GameNet.port_from_args())
-		if err != OK:
-			push_error("ENet listen failed (%s)" % error_string(err))
-	elif GameNet.has_flag("--join"):
-		var join_err := GameNet.join(GameNet.host_from_args(), GameNet.port_from_args())
-		if join_err != OK:
-			push_error("ENet join failed (%s)" % error_string(join_err))
-	_refresh_label()
+
+	var stub_mode := LaunchArgs.has("--stub")
+	var identity_path := LaunchArgs.value("--identity", STUB_IDENTITY_PATH if stub_mode else ClientIdentity.DEFAULT_PATH)
+	identity = ClientIdentity.new(identity_path)
+	identity.load()
+	identity.ensure_name(LaunchArgs.value("--name", ""))
+	identity.save()
+
+	world.bind(session)
+	hud.bind(session)
+	play_input.setup(session, camera, toolbar, world)
+	toolbar.tax_rate_committed.connect(_on_tax_rate_committed)
+	session.updated.connect(_on_session_updated)
+	camera.block_changed.connect(_on_camera_block_changed)
+	play_input.hover_changed.connect(_on_hover_changed)
+	connection.state_changed.connect(func(_state: int) -> void: _refresh_connection_text())
+
+	var spawn := WorldState.spawn_block(SliceConstants.Owner.FACTION_A)
+	camera.focus_block(spawn.block_x, spawn.block_y)
+
+	_screenshot_path = LaunchArgs.value("--screenshot", "")
+	_screenshot_frames = LaunchArgs.int_value("--screenshot-frames", SCREENSHOT_FRAMES_DEFAULT)
+	var seconds_arg := LaunchArgs.value("--screenshot-seconds", "")
+	if seconds_arg.is_valid_float():
+		_screenshot_seconds = float(seconds_arg)
+	var script_path := LaunchArgs.value("--input-script", "")
+	if not script_path.is_empty():
+		input_script = InputScript.new()
+		input_script.name = "InputScript"
+		input_script.setup(camera, toolbar)
+		input_script.load_file(script_path)
+		add_child(input_script)
+
+	if stub_mode:
+		stub = StubServer.new()
+		stub.name = "StubServer"
+		add_child(stub)
+		stub.start(session, identity.name)
+	else:
+		connection.start(
+			LaunchArgs.value("--join", ClientConnection.DEFAULT_HOST),
+			LaunchArgs.int_value("--port", ClientConnection.DEFAULT_PORT),
+			identity,
+			session
+		)
+	_refresh_connection_text()
+	_on_session_updated()
 
 
-func _frame_map() -> void:
+func _process(delta: float) -> void:
+	_refresh_connection_text()
+	if _frames_since_start >= 0:
+		_frames_since_start += 1
+		_seconds_since_start += delta
+	if _screenshot_taken or _screenshot_path.is_empty() or _frames_since_start < 0:
+		return
+	var due := false
+	if _screenshot_seconds >= 0.0:
+		due = _seconds_since_start >= _screenshot_seconds
+	else:
+		due = _frames_since_start >= _screenshot_frames
+	if due and (input_script == null or input_script.finished):
+		_screenshot_taken = true
+		_take_screenshot()
+
+
+func _on_session_updated() -> void:
+	var active := session.can_act()
+	toolbar.set_enabled(active)
+	toolbar.sync_tax_rate(session.view_tax_rate())
+	if session.match_started and not _was_started:
+		_frames_since_start = 0
+		_camera_block_sent = Vector2i(-1, -1)
+	_was_started = session.match_started
+	if session.faction != SliceConstants.Owner.NEUTRAL and not _focused_once:
+		_focused_once = true
+		var spawn := WorldState.spawn_block(session.faction)
+		camera.focus_block(spawn.block_x, spawn.block_y)
+	_push_camera_block()
+
+
+func _on_camera_block_changed(block_x: int, block_y: int) -> void:
+	_camera_block = Vector2i(block_x, block_y)
+	_push_camera_block()
+
+
+## Camera interest follows the look-at block; sent once per block while the round runs.
+func _push_camera_block() -> void:
+	if _camera_block == _camera_block_sent or not session.match_started:
+		return
+	if stub != null:
+		stub.set_camera_block(_camera_block.x, _camera_block.y)
+	elif connection.is_online():
+		GameNet.set_camera_local(_camera_block.x, _camera_block.y)
+	else:
+		return
+	_camera_block_sent = _camera_block
+
+
+func _on_tax_rate_committed(rate: float) -> void:
+	if not session.can_act():
+		return
+	session.send_command(GameCommand.set_tax_rate(rate))
+
+
+func _on_hover_changed(cell: Vector2i) -> void:
+	if cell == CameraRig.NO_TILE:
+		hud.hover_text = ""
+	else:
+		var view := session.view_tile(cell.x, cell.y)
+		hud.hover_text = "tile %d,%d  %s %s" % [
+			cell.x, cell.y, ClientSession.faction_name(view.owner), ClientSession.zone_name(view.zone)
+		]
+
+
+func _refresh_connection_text() -> void:
+	if stub != null:
+		hud.connection_text = "Stub server (offline, --stub)"
+		hud.connection_warn = false
+		return
+	hud.connection_text = connection.status_text()
+	hud.connection_warn = (
+		connection.state == ClientConnection.State.OFFLINE
+		or connection.state == ClientConnection.State.CONNECTING
+	)
+
+
+func _size_ground() -> void:
+	var mesh := PlaneMesh.new()
 	var map_size := float(SliceConstants.MAP_SIZE)
-	var target := Vector3(map_size * 0.5, 0.0, map_size * 0.5)
-	var pitch_deg := 65.0
-	var dist := map_size * CAMERA_DIST_PER_TILE
-	var pitch := deg_to_rad(pitch_deg)
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.current = true
-	camera.size = map_size + 8.0
-	camera.rotation_degrees = Vector3(-pitch_deg, 0.0, 0.0)
-	camera.position = target + Vector3(0.0, dist * sin(pitch), dist * cos(pitch))
+	mesh.size = Vector2(map_size, map_size)
+	ground.mesh = mesh
+	ground.position = Vector3(map_size * 0.5, 0.0, map_size * 0.5)
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Palette.GROUND
+	material.roughness = 1.0
+	ground.material_override = material
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_H:
-				GameNet.host(GameNet.port_from_args())
-				return
-			KEY_J:
-				GameNet.join(GameNet.DEFAULT_JOIN_HOST, GameNet.port_from_args())
-				return
-			KEY_Z:
-				session.send_command(GameCommand.set_zone(cursor.x, cursor.y, SliceConstants.Zone.R))
-				return
-			KEY_E:
-				session.send_command(GameCommand.add_edge(cursor, cursor + Vector2i(1, 0)))
-				return
-			KEY_P:
-				session.send_command(GameCommand.place_power(cursor.x, cursor.y))
-				return
-			KEY_BACKSPACE:
-				session.send_command(GameCommand.demolish_own(cursor.x, cursor.y))
-				return
-	if event.is_action_pressed("ui_accept"):
-		session.send_command(GameCommand.claim_tile(cursor.x, cursor.y))
-	elif event.is_action_pressed("ui_left"):
-		cursor.x = maxi(0, cursor.x - 1)
-	elif event.is_action_pressed("ui_right"):
-		cursor.x = mini(SliceConstants.MAP_SIZE - 1, cursor.x + 1)
-	elif event.is_action_pressed("ui_up"):
-		cursor.y = maxi(0, cursor.y - 1)
-	elif event.is_action_pressed("ui_down"):
-		cursor.y = mini(SliceConstants.MAP_SIZE - 1, cursor.y + 1)
-	else:
-		return
-	_refresh_label()
-
-
-func _on_faction(assigned: int) -> void:
-	if assigned == SliceConstants.Owner.FACTION_B:
-		cursor = CURSOR_B
-	else:
-		cursor = CURSOR_A
-	_refresh_label()
-
-
-func _refresh_label() -> void:
-	_sync_camera_block()
-	label.text = session.status_text(cursor)
-
-
-func _sync_camera_block() -> void:
-	if session == null or not session.match_started:
-		return
-	var block := InterestId.from_tile(cursor.x, cursor.y)
-	var next := Vector2i(block.block_x, block.block_y)
-	if next == _camera_block:
-		return
-	_camera_block = next
-	GameNet.set_camera_local(next.x, next.y)
+func _take_screenshot() -> void:
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	var err := image.save_png(_screenshot_path)
+	print("SCREENSHOT %s %s %dx%d" % [_screenshot_path, error_string(err), image.get_width(), image.get_height()])
+	get_tree().quit(0 if err == OK else 1)
