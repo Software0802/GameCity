@@ -7,14 +7,21 @@ extends SceneTree
 ## so a tier step takes two ticks) unless it says otherwise. Prints SIM_OK plus one
 ## SIM_PERF line and exits 0, or prints each failure and exits 1.
 ## Power coverage is the (2 × POWER_RADIUS + 1)² square around a plant; the capacity
-## scenarios derive their building counts from POWER_PLANT_CAPACITY.
+## scenarios derive their building counts from POWER_PLANT_CAPACITY. The street
+## scenarios spell out every edge load they rely on (RoadNetwork header has the
+## formula) so a change to CONGESTION_CAPACITY can be read against them.
 
 const WorldStateScript = preload("res://server/world_state.gd")
 const GrowthModelScript = preload("res://server/sim/growth_model.gd")
+const FieldQuantScript = preload("res://server/sim/field_quant.gd")
+const StarterCityScript = preload("res://server/sim/starter_city.gd")
 
 const TEST_PACE := 0.01
 const A := SliceConstants.Owner.FACTION_A
 const B := SliceConstants.Owner.FACTION_B
+const R := SliceConstants.Zone.R
+const C := SliceConstants.Zone.C
+const I := SliceConstants.Zone.I
 const PERF_TICKS := 100
 const PERF_SIDE := 64
 
@@ -37,6 +44,13 @@ func _initialize() -> void:
 	_check_income(errors)
 	_check_event_quantization(errors)
 	_check_zone_change(errors)
+	_check_adjacent_pair(errors)
+	_check_comb_street(errors)
+	_check_corridor_latecomer(errors)
+	_check_dense_grid(errors)
+	_check_power_sharing(errors)
+	_check_industry_grows(errors)
+	_check_population_served(errors)
 	_check_starter_city(errors)
 	_check_starter_smoke_b(errors)
 	_check_perf(errors)
@@ -166,10 +180,13 @@ func _check_tier_up(errors: Array[String]) -> void:
 	_expect(errors, delta2 != null and delta2.tile_delta.building_tier == 1, "tier change sends a TileDelta")
 	_expect(errors, is_zero_approx(world.tier_timer(0, 0)), "timer resets after the step")
 	_expect(errors, world.population(A) == SliceConstants.TIER_POP[1], "population follows the tier")
-	# The upgraded tile now loads its edge: tier 1 + tier 0 = 1 → 0.1 → one 1/8 step.
+	# The upgraded tile now loads its edge: tier 1 + tier 0 = 1 → 1 / CONGESTION_CAPACITY,
+	# which rounds to the first 1/8 step for any capacity between 6 and 15.
+	var step := FieldQuantScript.snap(1.0 / float(SliceConstants.CONGESTION_CAPACITY))
 	var congestion: ServerEvent = _first_kind(tick2, ServerEvent.Kind.CONGESTION_ALERT)
-	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, 0.125), "tier step crosses a congestion step")
-	_expect(errors, world.find_edge(Vector2i(0, 0), Vector2i(1, 0)) != null and is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(1, 0)).congestion, 0.125), "edge stores quantized congestion")
+	_expect(errors, congestion != null and is_equal_approx(congestion.congestion_alert.congestion, step), "tier step crosses a congestion step")
+	_expect(errors, world.find_edge(Vector2i(0, 0), Vector2i(1, 0)) != null and is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(1, 0)).congestion, step), "edge stores quantized congestion")
+	_expect(errors, is_equal_approx(world.edge_congestion_raw(Vector2i(0, 0), Vector2i(1, 0)), 1.0 / float(SliceConstants.CONGESTION_CAPACITY)), "edge keeps the raw ratio for the growth model")
 	# Demand flips: pop 3 > jobs 2 closes the R gate (0.3 × 0.9 = 0.27 ≤ SAT_DOWN),
 	# so the tile falls back after TIER_DOWN_SECONDS while C grows on the open gate.
 	world.sim_tick(3)
@@ -190,7 +207,7 @@ func _check_tier_two(errors: Array[String]) -> void:
 	var reached := _ticks_until(world, 0, 0, 2, 4)
 	_expect(errors, reached == 4, "R reaches tier 2 on tick 4 (got %d)" % reached)
 	_expect(errors, world.population(A) == SliceConstants.TIER_POP[2], "tier 2 population")
-	_expect(errors, is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(0, 1)).congestion, 0.25), "tier 2 on an otherwise empty edge loads it to 2/10 → 2/8")
+	_expect(errors, is_equal_approx(world.find_edge(Vector2i(0, 0), Vector2i(0, 1)).congestion, FieldQuantScript.snap(2.0 / float(SliceConstants.CONGESTION_CAPACITY))), "tier 2 on an otherwise empty edge loads it to 2 / CONGESTION_CAPACITY, quantized")
 	# pop 8 > jobs 4 now closes the R gate: the down timer runs, no up timer ever does.
 	world.sim_tick(5)
 	_expect(errors, world.tile_at(0, 0).building_tier == 2 and world.tier_timer(0, 0) <= 0.0, "max tier never accumulates an up timer")
@@ -238,9 +255,9 @@ func _check_brownout(errors: Array[String]) -> void:
 		var result: Dictionary = world.apply(A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C))
 		_expect(errors, result["reason"] == ReasonCode.Id.OK, "zone C at %s" % cell)
 		placed += 1
-		var load: int = world.plant_load(plant.x, plant.y)
-		_expect(errors, load == placed, "plant load counts tier+1 per building (%d after %d)" % [load, placed])
-		var brown := load > cap
+		var load: float = world.plant_load(plant.x, plant.y)
+		_expect(errors, is_equal_approx(load, float(placed)), "plant load counts tier+1 per building (%s after %d)" % [load, placed])
+		var brown := placed > cap
 		_expect(errors, world.tile_at(cell.x, cell.y).brownout == brown, "brownout flag after %d buildings" % placed)
 		for event in result["events"]:
 			if event.kind == ServerEvent.Kind.POWER_ALERT and event.power_alert.brownout and event.power_alert.x == plant.x and event.power_alert.y == plant.y:
@@ -253,14 +270,16 @@ func _check_brownout(errors: Array[String]) -> void:
 	_expect(errors, world.tile_at(plant.x + SliceConstants.POWER_RADIUS, plant.y + SliceConstants.POWER_RADIUS).power_covered, "square corner is covered")
 	var states: Array = world.faction_states()
 	_expect(errors, states[A].power_capacity == cap and states[A].power_load == cap + 1, "FactionState power capacity and load")
-	# An overloaded plant gives no actual power: served R stays dark and does not grow.
+	# An overloaded plant gives no actual power: served R stays dark, does not grow,
+	# and houses nobody (population needs a road and actual power).
 	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(3, 0), Vector2i(4, 0)), "road for the brownout R")
 	_apply_ok(errors, world, A, GameCommand.set_zone(3, 0, SliceConstants.Zone.R), "R under brownout")
 	for tick in 3:
 		world.sim_tick(tick + 1)
 	_expect(errors, is_zero_approx(world.satisfaction_raw(3, 0)) and world.tile_at(3, 0).building_tier == 0, "brownout R has zero satisfaction")
+	_expect(errors, world.population(A) == 0 and world.jobs(A) == 0, "nothing under a browned-out plant counts (pop %d jobs %d)" % [world.population(A), world.jobs(A)])
 	var summary: RegionSummary = world.summary_for(InterestId.new(0, 0))
-	_expect(errors, summary.brownout and summary.power_alert and summary.population == SliceConstants.TIER_POP[0] and summary.crisis == false, "RegionSummary reports brownout, shortage, population")
+	_expect(errors, summary.brownout and summary.power_alert and summary.population == 0 and summary.crisis == false, "RegionSummary reports brownout, shortage, zero population")
 	# Demolishing two buildings clears it and sends the all-clear.
 	var cleared := false
 	for cell in inside.slice(0, 2):
@@ -268,7 +287,9 @@ func _check_brownout(errors: Array[String]) -> void:
 		for event in result["events"]:
 			if event.kind == ServerEvent.Kind.POWER_ALERT and not event.power_alert.brownout and event.power_alert.x == plant.x:
 				cleared = true
+	# Only the R and the C at (4,0) have a road; the other C tiles never count.
 	_expect(errors, cleared and not world.tile_at(plant.x, plant.y).brownout, "brownout clears when the load drops")
+	_expect(errors, world.population(A) == SliceConstants.TIER_POP[0] and world.jobs(A) == SliceConstants.TIER_JOBS[0], "counters return when the power does (pop %d jobs %d)" % [world.population(A), world.jobs(A)])
 
 
 ## Three A industrial tiles at the spawn corner pollute a B residential tile across
@@ -332,8 +353,11 @@ func _check_crisis(errors: Array[String]) -> void:
 		return
 	for cell in inside.slice(0, load):
 		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C), "C at %s" % cell)
+	# The first two C tiles get a road so the storm has a job count to empty.
+	_apply_ok(errors, world, A, GameCommand.add_edge(inside[0], inside[1]), "road for two C tiles")
 	world.sim_tick(1)
-	_expect(errors, not world.tile_at(plant.x, plant.y).brownout and world.plant_load(plant.x, plant.y) == load, "plant copes before the storm")
+	_expect(errors, not world.tile_at(plant.x, plant.y).brownout and is_equal_approx(world.plant_load(plant.x, plant.y), float(load)), "plant copes before the storm")
+	_expect(errors, world.jobs(A) == 2 * SliceConstants.TIER_JOBS[0], "two roaded C tiles count before the storm (jobs %d)" % world.jobs(A))
 	_expect(errors, not _has_kind(world.sim_tick(2), ServerEvent.Kind.CRISIS_EVENT), "no CrisisEvent without set_crisis")
 
 	var now := int(Time.get_unix_time_from_system())
@@ -345,6 +369,7 @@ func _check_crisis(errors: Array[String]) -> void:
 	_expect(errors, crisis != null and crisis.crisis_event.active and crisis.crisis_event.kind == CrisisEvent.KIND_GRID_STORM, "CrisisEvent grid_storm active")
 	_expect(errors, crisis != null and crisis.crisis_event.ends_at_unix == world.crisis_ends_at_unix, "CrisisEvent carries ends_at_unix")
 	_expect(errors, world.tile_at(plant.x, plant.y).brownout and world.tile_at(inside[0].x, inside[0].y).brownout, "storm browns out the plant's radius")
+	_expect(errors, world.jobs(A) == 0 and world.faction_states()[A].jobs == 0, "storm brownout empties the job count")
 	var alert: ServerEvent = _first_kind(storm, ServerEvent.Kind.POWER_ALERT)
 	_expect(errors, alert != null and alert.power_alert.brownout, "storm sends PowerAlert(brownout=true)")
 	_expect(errors, _count_kind(storm, ServerEvent.Kind.CRISIS_EVENT) == 1 and not _has_kind(world.sim_tick(4), ServerEvent.Kind.CRISIS_EVENT), "CrisisEvent sent once")
@@ -357,6 +382,7 @@ func _check_crisis(errors: Array[String]) -> void:
 	var over: ServerEvent = _first_kind(calm, ServerEvent.Kind.CRISIS_EVENT)
 	_expect(errors, over != null and not over.crisis_event.active and over.crisis_event.ends_at_unix == 0, "CrisisEvent inactive after the storm")
 	_expect(errors, not world.tile_at(plant.x, plant.y).brownout, "brownout clears after the storm")
+	_expect(errors, world.jobs(A) == 2 * SliceConstants.TIER_JOBS[0], "jobs return after the storm")
 	var custom = _world()
 	custom.set_crisis(true, 1234567)
 	_expect(errors, custom.crisis_ends_at_unix == 1234567, "explicit ends_at_unix is kept")
@@ -508,10 +534,10 @@ func _check_zone_change(errors: Array[String]) -> void:
 ## The starter town (server/sim/starter_city.gd) both factions get on a new round:
 ## one plant whose square covers the whole block, the 田 roads with lanes, 16
 ## tier-1 buildings (9 R / 4 C / 3 I) on road tiles, nothing charged, timers at 0.
-## At pace 0.01 every R and C lot reaches tier 2 on tick 2 while the factories stay
-## at tier 1 (their own pollution keeps them under SAT_UP); through tick 20 nothing
-## falls back or browns out. The load figures are what POWER_PLANT_CAPACITY has to
-## carry: the town at the start, the town fully grown, and the storm must still bite.
+## At pace 0.01 every lot, the factories included (industry ignores its own smoke),
+## reaches tier 2 on tick 2; through tick 20 nothing falls back or browns out. The
+## load figures are what POWER_PLANT_CAPACITY has to carry: the town at the start,
+## the town fully grown (16 × 3 = 48), and the storm must still bite.
 func _check_starter_city(errors: Array[String]) -> void:
 	var world = _world()
 	_expect(errors, world.seed_starter_cities() == 2, "seed_starter_cities seeds both blocks")
@@ -569,21 +595,21 @@ func _check_starter_city(errors: Array[String]) -> void:
 	var r_lots: int = plan_a.count_zone(SliceConstants.Zone.R)
 	var c_lots: int = plan_a.count_zone(SliceConstants.Zone.C)
 	var i_lots: int = plan_a.count_zone(SliceConstants.Zone.I)
-	# Growth: tick 1 keeps every tier, tick 2 lifts every R and C lot, nothing moves after.
+	# Growth: tick 1 keeps every tier, tick 2 lifts every lot, nothing moves after.
 	var tick1: Array = world.sim_tick(1)
 	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == [0, plan_a.building_count(), 0], "tick 1 keeps every starter building at tier 1")
 	_expect(errors, _count_kind(tick1, ServerEvent.Kind.POWER_ALERT) == 0, "tick 1 sends no PowerAlert")
 	for lot in plan_a.lots:
 		var cell: Vector2i = lot[0]
 		var sat: float = world.satisfaction_raw(cell.x, cell.y)
+		_expect(errors, sat >= SliceConstants.SAT_UP, "lot %s satisfied enough to grow (%.3f)" % [cell, sat])
 		if int(lot[1]) == SliceConstants.Zone.I:
-			_expect(errors, sat > SliceConstants.SAT_DOWN and sat < SliceConstants.SAT_UP, "factory %s sits between SAT_DOWN and SAT_UP (%.3f)" % [cell, sat])
-		else:
-			_expect(errors, sat >= SliceConstants.SAT_UP, "lot %s satisfied enough to grow (%.3f)" % [cell, sat])
+			_expect(errors, world.pollution_raw(cell.x, cell.y) > 0.0 and is_equal_approx(sat, 1.0 - SliceConstants.TAX_RATE_DEFAULT), "factory %s ignores its own pollution (%.3f)" % [cell, sat])
 	world.sim_tick(2)
-	var grown := [0, i_lots, r_lots + c_lots]
-	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == grown and _tier_histogram(world, WorldStateScript.SPAWN_B) == grown, "tick 2 lifts every R and C lot to tier 2 in both blocks (A %s B %s)" % [_tier_histogram(world, WorldStateScript.SPAWN_A), _tier_histogram(world, WorldStateScript.SPAWN_B)])
+	var grown := [0, 0, r_lots + c_lots + i_lots]
+	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == grown and _tier_histogram(world, WorldStateScript.SPAWN_B) == grown, "tick 2 lifts every lot to tier 2 in both blocks (A %s B %s)" % [_tier_histogram(world, WorldStateScript.SPAWN_A), _tier_histogram(world, WorldStateScript.SPAWN_B)])
 	_expect(errors, world.population(A) == r_lots * SliceConstants.TIER_POP[2], "grown population")
+	_expect(errors, world.jobs(A) == (c_lots + i_lots) * SliceConstants.TIER_JOBS[2], "grown jobs")
 	var income_grown: float = world.faction_states()[A].income_per_sec * TEST_PACE
 	_expect(errors, income_grown > 0.0, "grown starter town earns money (%.3f/s at pace 1.0)" % income_grown)
 	for tick in range(3, 21):
@@ -662,23 +688,24 @@ func _check_starter_smoke_b(errors: Array[String]) -> void:
 
 
 ## 100 ticks at pace 0.01 on three maps: empty; a 64×64 city with every tile zoned
-## and plants every six tiles (81 buildings in every plant's square: all dark, no
-## growth, the pass still visits 4096 tiles); and a 64×64 city with one tile in
-## five zoned and plants every four tiles (≈ 16 buildings per plant, at most 51
-## load units fully grown: everything served, tiers keep moving every two ticks,
-## pollution and congestion churn). The zone cycle 5 R / 2 C / 2 I keeps every
-## demand gate open at any uniform tier and after R and C outgrow the factories,
-## so the city only ever grows and the population check cannot land in a trough.
+## and plants every nine tiles (81 buildings in every plant's square and no overlap
+## to share with: all dark, no growth, the pass still visits 4096 tiles); and a
+## 64×64 city with one tile in five zoned and plants every four tiles (≈ 16
+## buildings per plant, at most 51 load units fully grown: everything served, every
+## tile steps up on ticks 2 and 4, pollution and congestion churn, then steady). The
+## zone cycle 5 R / 2 C / 2 I keeps every demand gate open at any uniform tier, so
+## the city only ever grows and the population check cannot land in a trough.
 func _check_perf(errors: Array[String]) -> void:
 	var empty = _world()
 	var empty_avg := _time_ticks(empty, PERF_TICKS)
 
 	var dark = _world()
-	var dark_stats := _build_city(errors, dark, 1, 6)
+	var dark_stats := _build_city(errors, dark, 1, 9)
 	if dark_stats.is_empty():
 		return
 	var dark_avg := _time_ticks(dark, PERF_TICKS)
-	_expect(errors, dark.population(A) == dark_stats["r_tiles"], "over-loaded city stays at tier 0 (population %d)" % dark.population(A))
+	_expect(errors, dark.population(A) == 0 and dark.jobs(A) == 0, "over-loaded city houses and employs nobody (population %d, jobs %d)" % [dark.population(A), dark.jobs(A)])
+	_expect(errors, _tier_total(dark) == 0, "over-loaded city stays at tier 0")
 
 	var live = _world()
 	var live_stats := _build_city(errors, live, 5, 4)
@@ -758,7 +785,389 @@ func _build_city(errors: Array[String], world, zone_stride: int, plant_stride: i
 	}
 
 
+## Two R next to each other on one edge, both zoned at once, rise together to tier 2:
+## the edge carries 2 at tier 1 and 4 at tier 2, both under the congestion knee
+## (half of CONGESTION_CAPACITY), so the factor stays 1. Nine served tier-0 C tiles
+## (18 jobs) keep the R gate open even once the pair houses 16.
+func _check_adjacent_pair(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, R), "pair R one")
+	_apply_ok(errors, world, A, GameCommand.set_zone(1, 0, R), "pair R two")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "pair edge")
+	for y in 2:
+		for x in range(4, 8):
+			_apply_ok(errors, world, A, GameCommand.set_zone(x, y, C), "jobs C at (%d,%d)" % [x, y])
+			if x > 4:
+				_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(x - 1, y), Vector2i(x, y)), "jobs road (%d,%d)" % [x, y])
+	_apply_ok(errors, world, A, GameCommand.set_zone(4, 2, C), "ninth C")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(4, 1), Vector2i(4, 2)), "ninth C road")
+	_apply_ok(errors, world, A, GameCommand.place_power(3, 3), "pair plant")
+	_expect(errors, world.jobs(A) == 9 * SliceConstants.TIER_JOBS[0], "nine served C tiles (jobs %d)" % world.jobs(A))
+	_expect(errors, world.faction_states()[A].demand_r > 0.0, "pair scenario opens the R gate")
+	world.sim_tick(1)
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(0, 0).building_tier == 1 and world.tile_at(1, 0).building_tier == 1, "adjacent pair reaches tier 1 together")
+	var raw_one: float = world.edge_congestion_raw(Vector2i(0, 0), Vector2i(1, 0))
+	_expect(errors, is_equal_approx(raw_one, 2.0 / float(SliceConstants.CONGESTION_CAPACITY)), "two tier-1 neighbours load their edge to 2 (raw %.3f)" % raw_one)
+	world.sim_tick(3)
+	_expect(errors, is_equal_approx(world.satisfaction_raw(0, 0), 1.0 - SliceConstants.TAX_RATE_DEFAULT), "load 2 costs no satisfaction (got %.3f)" % world.satisfaction_raw(0, 0))
+	world.sim_tick(4)
+	_expect(errors, world.tile_at(0, 0).building_tier == 2 and world.tile_at(1, 0).building_tier == 2, "adjacent pair reaches tier 2 together (%d, %d)" % [world.tile_at(0, 0).building_tier, world.tile_at(1, 0).building_tier])
+	var raw_two: float = world.edge_congestion_raw(Vector2i(0, 0), Vector2i(1, 0))
+	_expect(errors, is_equal_approx(raw_two, 4.0 / float(SliceConstants.CONGESTION_CAPACITY)) and is_equal_approx(GrowthModelScript.congestion_factor(raw_two), 1.0), "two tier-2 neighbours load their edge to 4, still under the knee (raw %.3f)" % raw_two)
+	world.sim_tick(5)
+	world.sim_tick(6)
+	_expect(errors, world.tile_at(0, 0).building_tier == 2 and world.tile_at(1, 0).building_tier == 2, "the pair holds tier 2")
+
+
+## A comb street: six street tiles (x,1) joined in a row, a lot above and below each
+## ((x,0), (x,2)) hanging off its own tooth edge. Twelve tier-2 lots (9 R / 3 C) and a
+## tier-1 latecomer on a seventh tooth; three tier-2 factories four rows down keep
+## every demand gate open and their smoke off the lots. Loads: a lot's tooth edge is
+## ½ (1·2 + 4·0 + 0 + 4) = 3, a street edge ½ (0 + 0 + 4 + 4) = 4, the latecomer's
+## tooth ½ (1·1 + 3·0 + 0 + 1) = 1: all under the knee, the latecomer rises and the
+## twelve hold. A building zoned on a street tile grows as well (mean load 3.5).
+func _check_comb_street(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var plan = _plan(Vector2i(3, 3))
+	var street: Array[Vector2i] = []
+	for x in 7:
+		street.append(Vector2i(x, 1))
+		plan.edges.append([Vector2i(x, 0), Vector2i(x, 1)])
+		plan.edges.append([Vector2i(x, 1), Vector2i(x, 2)])
+	_add_path(plan, street)
+	var commercial := {Vector2i(1, 0): true, Vector2i(3, 2): true, Vector2i(5, 0): true}
+	for x in 6:
+		for cell in [Vector2i(x, 0), Vector2i(x, 2)]:
+			plan.lots.append([cell, C if commercial.has(cell) else R, 2])
+	var latecomer := Vector2i(6, 0)
+	plan.lots.append([latecomer, R, 1])
+	var factories: Array[Vector2i] = [Vector2i(0, 6), Vector2i(1, 6), Vector2i(2, 6)]
+	_add_path(plan, factories)
+	for cell in factories:
+		plan.lots.append([cell, I, 2])
+	_expect(errors, world.seed_plan(A, plan), "comb street seeded")
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.demand_r > 0.0 and state.demand_c > 0.0 and state.demand_i > 0.0, "comb street keeps every gate open (%s %s %s)" % [state.demand_r, state.demand_c, state.demand_i])
+	_expect(errors, _brownout_count(world, Vector2i.ZERO) == 0 and state.power_load == 15 * 3 + 2, "comb street fits one plant (load %d)" % state.power_load)
+	var cap := float(SliceConstants.CONGESTION_CAPACITY)
+	_expect(errors, is_equal_approx(world.edge_congestion_raw(Vector2i(2, 0), Vector2i(2, 1)), 3.0 / cap), "lot tooth carries load 3 (raw %.3f)" % world.edge_congestion_raw(Vector2i(2, 0), Vector2i(2, 1)))
+	_expect(errors, is_equal_approx(world.edge_congestion_raw(Vector2i(2, 1), Vector2i(3, 1)), 4.0 / cap), "street edge carries load 4 (raw %.3f)" % world.edge_congestion_raw(Vector2i(2, 1), Vector2i(3, 1)))
+	_expect(errors, is_equal_approx(world.edge_congestion_raw(latecomer, Vector2i(6, 1)), 1.0 / cap), "latecomer tooth carries load 1 (raw %.3f)" % world.edge_congestion_raw(latecomer, Vector2i(6, 1)))
+	world.sim_tick(1)
+	_expect(errors, world.satisfaction_raw(latecomer.x, latecomer.y) >= SliceConstants.SAT_UP, "latecomer on a full comb street is satisfied (%.3f)" % world.satisfaction_raw(latecomer.x, latecomer.y))
+	for lot in plan.lots:
+		var cell: Vector2i = lot[0]
+		_expect(errors, world.satisfaction_raw(cell.x, cell.y) >= SliceConstants.SAT_UP, "comb lot %s unaffected by its neighbours (%.3f)" % [cell, world.satisfaction_raw(cell.x, cell.y)])
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(latecomer.x, latecomer.y).building_tier == 2, "latecomer reaches tier 2 on a street full of tier-2 lots")
+	_expect(errors, _tier_histogram(world, Vector2i.ZERO) == [0, 0, plan.lots.size()], "every comb lot stands at tier 2 (%s)" % [_tier_histogram(world, Vector2i.ZERO)])
+	# A building on the street tile itself: mean load (4 + 4 + 3 + 3) / 4 = 3.5 at tier 0.
+	_apply_ok(errors, world, A, GameCommand.set_zone(3, 1, R), "zone the street tile")
+	world.sim_tick(3)
+	_expect(errors, is_equal_approx(world.tile_congestion_raw(3, 1), 3.5 / cap), "street tile sees mean load 3.5 (raw %.3f)" % world.tile_congestion_raw(3, 1))
+	world.sim_tick(4)
+	_expect(errors, world.tile_at(3, 1).building_tier == 1, "a lot zoned on the street tile grows too")
+	_expect(errors, _brownout_count(world, Vector2i.ZERO) == 0, "comb street never browns out")
+
+
+## A corridor: seven tiles in a row, every one built, joined by six edges. Six stand
+## at tier 2 (4 R / 2 C) and the middle one is a tier-1 R zoned later. Its two edges
+## each carry ½ (2·1 + 2·2 + 4 + 3) = 6.5, so it needs CONGESTION_CAPACITY ≥ 12 to
+## rise (factor at 6.5/12 = 0.917 → 0.825 ≥ SAT_UP; at 6.5/10 the factor is 0.7 and
+## 0.63 blocks it). Once every tile is tier 2 the interior edges carry 8: felt
+## (satisfaction below SAT_UP) but held (above SAT_DOWN). Two tier-2 factories five
+## rows down supply jobs without polluting the corridor.
+func _check_corridor_latecomer(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var plan = _plan(Vector2i(3, 3))
+	var line: Array[Vector2i] = []
+	for x in 7:
+		line.append(Vector2i(x, 0))
+	_add_path(plan, line)
+	var zones := [R, C, R, R, R, C, R]
+	for x in 7:
+		plan.lots.append([Vector2i(x, 0), zones[x], 1 if x == 3 else 2])
+	var factories: Array[Vector2i] = [Vector2i(0, 5), Vector2i(1, 5)]
+	_add_path(plan, factories)
+	for cell in factories:
+		plan.lots.append([cell, I, 2])
+	_expect(errors, world.seed_plan(A, plan), "corridor seeded")
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.demand_r > 0.0 and state.demand_c > 0.0 and state.demand_i > 0.0, "corridor keeps every gate open (%s %s %s)" % [state.demand_r, state.demand_c, state.demand_i])
+	var cap := float(SliceConstants.CONGESTION_CAPACITY)
+	var raw: float = world.edge_congestion_raw(Vector2i(2, 0), Vector2i(3, 0))
+	_expect(errors, is_equal_approx(raw, 6.5 / cap), "latecomer edge carries load 6.5 (raw %.3f)" % raw)
+	world.sim_tick(1)
+	var sat: float = world.satisfaction_raw(3, 0)
+	_expect(errors, is_equal_approx(sat, (1.0 - SliceConstants.TAX_RATE_DEFAULT) * GrowthModelScript.congestion_factor(6.5 / cap)), "latecomer satisfaction follows the curve (%.3f)" % sat)
+	_expect(errors, sat >= SliceConstants.SAT_UP, "a tier-1 latecomer between tier-2 neighbours on a corridor must still rise: satisfaction %.3f < SAT_UP at CONGESTION_CAPACITY %d (needs ≥ 12)" % [sat, SliceConstants.CONGESTION_CAPACITY])
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(3, 0).building_tier == 2, "corridor latecomer reaches tier 2 (tier %d)" % world.tile_at(3, 0).building_tier)
+	var interior: float = world.edge_congestion_raw(Vector2i(2, 0), Vector2i(3, 0))
+	_expect(errors, is_equal_approx(interior, 8.0 / cap), "full tier-2 corridor interior edge carries load 8 (raw %.3f)" % interior)
+	world.sim_tick(3)
+	var held: float = world.satisfaction_raw(3, 0)
+	_expect(errors, held < SliceConstants.SAT_UP and held > SliceConstants.SAT_DOWN, "a full tier-2 corridor feels its congestion but holds (%.3f)" % held)
+	world.sim_tick(4)
+	world.sim_tick(5)
+	for x in 7:
+		_expect(errors, world.tile_at(x, 0).building_tier == 2, "corridor tile %d holds tier 2" % x)
+
+
+## Double density: the same six-tile street with lots two deep on both sides and a
+## service road along every row, every tile roaded to its orthogonal neighbours
+## (rows 0, 1, 3, 4 built, row 2 the street; 24 lots). The tier-1 R at (2,1) sees
+## edges of 10.5 (to row 0), 6.5 (to the street) and 11.5 twice (along its row):
+## mean 10, at or above CONGESTION_CAPACITY × 5/6, factor ≤ 1/3, satisfaction ≤ 0.3.
+## It does not rise. Two plants on street tiles share the 71 units of load; four
+## tier-2 factories to the east, on their own plant, supply jobs.
+func _check_dense_grid(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	# Land for the factory strip and its plant.
+	for x in range(8, 13):
+		_apply_ok(errors, world, A, GameCommand.claim_tile(x, 2), "claim (%d,2)" % x)
+	for y in range(3, 6):
+		_apply_ok(errors, world, A, GameCommand.claim_tile(10, y), "claim (10,%d)" % y)
+	var plan = _plan(Vector2i(1, 2))
+	for y in 5:
+		var row: Array[Vector2i] = []
+		for x in 6:
+			row.append(Vector2i(x, y))
+		_add_path(plan, row)
+	for x in 6:
+		var column: Array[Vector2i] = []
+		for y in 5:
+			column.append(Vector2i(x, y))
+		_add_path(plan, column)
+	var test := Vector2i(2, 1)
+	var commercial := {Vector2i(0, 0): true, Vector2i(3, 0): true, Vector2i(5, 1): true, Vector2i(1, 3): true, Vector2i(4, 3): true, Vector2i(2, 4): true, Vector2i(5, 4): true}
+	for y in [0, 1, 3, 4]:
+		for x in 6:
+			var cell := Vector2i(x, y)
+			if cell == test:
+				plan.lots.append([cell, R, 1])
+			else:
+				plan.lots.append([cell, C if commercial.has(cell) else R, 2])
+	_expect(errors, plan.lots.size() == 24, "dense grid holds 24 lots")
+	_expect(errors, world.seed_plan(A, plan), "dense grid seeded")
+	# Second plant on the other end of the street shares the load; the factories get their own.
+	_apply_ok(errors, world, A, GameCommand.place_power(4, 2), "second street plant")
+	var strip = _plan(Vector2i(10, 5))
+	var factories: Array[Vector2i] = [Vector2i(9, 2), Vector2i(10, 2), Vector2i(11, 2), Vector2i(12, 2)]
+	_add_path(strip, factories)
+	for cell in factories:
+		strip.lots.append([cell, I, 2])
+	_expect(errors, world.seed_plan(A, strip), "factory strip seeded")
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.demand_r > 0.0 and state.demand_c > 0.0 and state.demand_i > 0.0, "dense grid keeps every gate open (%s %s %s)" % [state.demand_r, state.demand_c, state.demand_i])
+	_expect(errors, _brownout_count(world, Vector2i.ZERO) == 0 and is_equal_approx(world.plant_load(1, 2) + world.plant_load(4, 2), 71.0), "two plants share the dense grid (%.1f + %.1f)" % [world.plant_load(1, 2), world.plant_load(4, 2)])
+	var cap := float(SliceConstants.CONGESTION_CAPACITY)
+	var expected_mean := 0.0
+	for load in [10.5, 6.5, 11.5, 11.5]:
+		expected_mean += minf(1.0, load / cap) / 4.0
+	var mean: float = world.tile_congestion_raw(test.x, test.y)
+	_expect(errors, is_equal_approx(mean, expected_mean), "dense test lot sees edges 10.5 / 6.5 / 11.5 / 11.5 (mean raw %.3f, want %.3f)" % [mean, expected_mean])
+	world.sim_tick(1)
+	var sat: float = world.satisfaction_raw(test.x, test.y)
+	_expect(errors, sat < SliceConstants.SAT_UP, "doubling the density blocks the tier step (satisfaction %.3f)" % sat)
+	_expect(errors, world.tier_timer(test.x, test.y) <= 0.0, "no up timer runs in the dense grid")
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(test.x, test.y).building_tier < 2, "dense grid lot did not rise (tier %d)" % world.tile_at(test.x, test.y).building_tier)
+
+
+## Overlapping plants split a tile's load. One plant over POWER_PLANT_CAPACITY + 1
+## tier-0 buildings browns out; a second plant whose square overlaps takes half of
+## every shared tile, the first drops under capacity, the lights come back and the
+## all-clear PowerAlert goes out. Weight is conserved across the two, a building in
+## the overlap adds ½ to each, removing the second plant restores the overload, and
+## a save made in brownout restores with the same loads and no population.
+func _check_power_sharing(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	var first := Vector2i(3, 3)
+	var second := Vector2i(6, 6)
+	var cap := SliceConstants.POWER_PLANT_CAPACITY
+	_apply_ok(errors, world, A, GameCommand.place_power(first.x, first.y), "first plant")
+	var inside := _square_in_spawn(first, SliceConstants.POWER_RADIUS)
+	var zoned: Array[Vector2i] = []
+	for cell in inside:
+		if zoned.size() >= cap + 1:
+			break
+		if cell == second:
+			continue
+		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, C), "C at %s" % cell)
+		zoned.append(cell)
+	# Two of them get a road, so the job count shows whether the lights are on.
+	_apply_ok(errors, world, A, GameCommand.add_edge(zoned[0], zoned[1]), "road for two C tiles")
+	var lit_jobs := 2 * SliceConstants.TIER_JOBS[0]
+	_expect(errors, world.tile_at(first.x, first.y).brownout and is_equal_approx(world.plant_load(first.x, first.y), float(cap + 1)), "one plant over capacity browns out (load %.1f)" % world.plant_load(first.x, first.y))
+	_expect(errors, world.jobs(A) == 0, "nothing counts while dark")
+	var shared := 0
+	for cell in zoned:
+		if maxi(absi(cell.x - second.x), absi(cell.y - second.y)) <= SliceConstants.POWER_RADIUS:
+			shared += 1
+	var result: Dictionary = world.apply(A, GameCommand.place_power(second.x, second.y))
+	_expect(errors, result["reason"] == ReasonCode.Id.OK, "second plant placed")
+	var relieved := false
+	for event in result["events"]:
+		if event.kind == ServerEvent.Kind.POWER_ALERT and not event.power_alert.brownout and event.power_alert.x == first.x and event.power_alert.y == first.y:
+			relieved = true
+	var load_first: float = world.plant_load(first.x, first.y)
+	var load_second: float = world.plant_load(second.x, second.y)
+	_expect(errors, is_equal_approx(load_first, float(cap + 1) - 0.5 * float(shared)) and is_equal_approx(load_second, 0.5 * float(shared)), "shared tiles split in half (%.1f + %.1f, %d shared)" % [load_first, load_second, shared])
+	_expect(errors, is_equal_approx(load_first + load_second, float(cap + 1)), "weight is conserved across plants")
+	_expect(errors, load_first <= float(cap) and not world.tile_at(first.x, first.y).brownout and _brownout_count(world, Vector2i.ZERO) == 0, "second plant relieves the brownout")
+	_expect(errors, relieved, "all-clear PowerAlert at the first plant")
+	_expect(errors, world.jobs(A) == lit_jobs, "jobs return with the power (%d)" % world.jobs(A))
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.power_capacity == 2 * cap and state.power_load == cap + 1, "FactionState sums both plants (%d/%d)" % [state.power_load, state.power_capacity])
+	# A building in the overlap weighs half on each plant.
+	var extra := Vector2i(7, 7)
+	_apply_ok(errors, world, A, GameCommand.set_zone(extra.x, extra.y, C), "C in the overlap")
+	_expect(errors, is_equal_approx(world.plant_load(first.x, first.y), load_first + 0.5) and is_equal_approx(world.plant_load(second.x, second.y), load_second + 0.5), "a shared building adds ½ to each plant")
+	# Removing the second plant hands the load back.
+	_apply_ok(errors, world, A, GameCommand.remove_power(second.x, second.y), "remove the second plant")
+	_expect(errors, is_equal_approx(world.plant_load(first.x, first.y), float(cap + 2)) and world.tile_at(first.x, first.y).brownout, "removing the helper restores the overload (load %.1f)" % world.plant_load(first.x, first.y))
+	_expect(errors, world.jobs(A) == 0 and world.faction_states()[A].jobs == 0, "jobs vanish again in the dark")
+	# Save in brownout, restore: loads, darkness and the empty ledger come back.
+	var restored = WorldStateScript.from_save_dict(JSON.parse_string(JSON.stringify(world.to_save_dict())))
+	if restored == null:
+		errors.append("brownout save did not restore")
+		return
+	_expect(errors, is_equal_approx(restored.plant_load(first.x, first.y), float(cap + 2)) and restored.tile_at(first.x, first.y).brownout, "restored plant load and brownout match")
+	_expect(errors, restored.jobs(A) == 0 and restored.population(A) == 0, "restored ledger counts nothing under the dark plant")
+	_apply_ok(errors, restored, A, GameCommand.place_power(second.x, second.y), "second plant on the restored world")
+	_expect(errors, not restored.tile_at(first.x, first.y).brownout and restored.jobs(A) == lit_jobs, "restored world recovers the same way (jobs %d)" % restored.jobs(A))
+
+
+## Industry is not held down by its own smoke: a factory with road, power and an
+## open I gate rises to tier 2 like any other lot, its satisfaction is the bare tax
+## penalty although its own tile is the most polluted on the map, and a commercial
+## neighbour feels half the field. Ten served tier-0 R tiles supply the population
+## the I and C gates need (their own R gate stays closed, but tier 0 cannot fall).
+func _check_industry_grows(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, I), "factory")
+	_apply_ok(errors, world, A, GameCommand.set_zone(1, 0, C), "shop next door")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "factory road")
+	var homes: Array[Vector2i] = []
+	for x in 8:
+		homes.append(Vector2i(x, 5))
+	for cell in homes:
+		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, R), "home %s" % cell)
+	for x in 7:
+		_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(x, 5), Vector2i(x + 1, 5)), "home road %d" % x)
+	for cell in [Vector2i(0, 6), Vector2i(1, 6)]:
+		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, R), "home %s" % cell)
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 5), Vector2i(0, 6)), "home road down")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 6), Vector2i(1, 6)), "home road along")
+	_apply_ok(errors, world, A, GameCommand.place_power(3, 3), "plant")
+	_expect(errors, world.population(A) == 10 * SliceConstants.TIER_POP[0], "ten served homes")
+	var state: FactionState = world.faction_states()[A]
+	_expect(errors, state.demand_i > 0.0 and state.demand_c > 0.0, "I and C gates open (%s %s)" % [state.demand_i, state.demand_c])
+	world.sim_tick(1)
+	var smoke: float = world.pollution_raw(0, 0)
+	_expect(errors, smoke > 0.0 and smoke > world.pollution_raw(1, 0), "the factory tile is the most polluted")
+	_expect(errors, is_equal_approx(world.satisfaction_raw(0, 0), 1.0 - SliceConstants.TAX_RATE_DEFAULT), "factory satisfaction ignores pollution (%.3f)" % world.satisfaction_raw(0, 0))
+	var shop_expected: float = (1.0 - SliceConstants.TAX_RATE_DEFAULT) * (1.0 - 0.5 * world.pollution_raw(1, 0))
+	_expect(errors, is_equal_approx(world.satisfaction_raw(1, 0), shop_expected), "commercial takes half the field (%.3f vs %.3f)" % [world.satisfaction_raw(1, 0), shop_expected])
+	world.sim_tick(2)
+	_expect(errors, world.tile_at(0, 0).building_tier == 1, "factory reaches tier 1")
+	_expect(errors, world.faction_states()[A].demand_i > 0.0, "I gate still open at tier 1")
+	world.sim_tick(3)
+	world.sim_tick(4)
+	_expect(errors, world.tile_at(0, 0).building_tier == 2, "factory reaches tier 2 under its own smoke (tier %d)" % world.tile_at(0, 0).building_tier)
+	_expect(errors, world.jobs(A) >= SliceConstants.TIER_JOBS[2], "tier-2 factory jobs counted")
+	# Same threshold, different exposure: under the tier-2 factory's own field a
+	# residential lot on that tile would sit below SAT_UP and never take the step.
+	var own_field: float = world.pollution_raw(0, 0)
+	_expect(errors, own_field > 0.25 and (1.0 - SliceConstants.TAX_RATE_DEFAULT) * (1.0 - own_field) < SliceConstants.SAT_UP, "an R under the tier-2 factory's field (%.3f) could not rise; the factory did" % own_field)
+	# The same tile zoned R would feel the full field: compare on a twin world.
+	var twin = _world()
+	twin.free_build = true
+	_apply_ok(errors, twin, A, GameCommand.set_zone(0, 0, I), "twin factory")
+	_apply_ok(errors, twin, A, GameCommand.set_zone(1, 0, R), "twin home next door")
+	_apply_ok(errors, twin, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "twin road")
+	for x in range(4, 8):
+		_apply_ok(errors, twin, A, GameCommand.set_zone(x, 5, C), "twin jobs %d" % x)
+		if x > 4:
+			_apply_ok(errors, twin, A, GameCommand.add_edge(Vector2i(x - 1, 5), Vector2i(x, 5)), "twin jobs road %d" % x)
+	_apply_ok(errors, twin, A, GameCommand.place_power(3, 3), "twin plant")
+	twin.sim_tick(1)
+	var home_expected: float = (1.0 - SliceConstants.TAX_RATE_DEFAULT) * (1.0 - twin.pollution_raw(1, 0))
+	_expect(errors, twin.faction_states()[A].demand_r > 0.0 and is_equal_approx(twin.satisfaction_raw(1, 0), home_expected), "residential takes the full field (%.3f vs %.3f)" % [twin.satisfaction_raw(1, 0), home_expected])
+
+
+## Population and jobs follow service, not zoning: a building counts only with a
+## road and actual power, and the ledger, RegionSummary, FactionState and the score
+## agree at every step.
+func _check_population_served(errors: Array[String]) -> void:
+	var world = _world()
+	world.free_build = true
+	_build_served_r(errors, world)
+	var block := InterestId.new(0, 0)
+	_expect_counts(errors, world, block, SliceConstants.TIER_POP[0], SliceConstants.TIER_JOBS[0], "served R and C")
+	_apply_ok(errors, world, A, GameCommand.remove_edge(Vector2i(0, 0), Vector2i(1, 0)), "remove the road")
+	_expect_counts(errors, world, block, 0, 0, "no road")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "road back")
+	_expect_counts(errors, world, block, SliceConstants.TIER_POP[0], SliceConstants.TIER_JOBS[0], "road restored")
+	_apply_ok(errors, world, A, GameCommand.remove_power(2, 2), "remove the plant")
+	_expect_counts(errors, world, block, 0, 0, "no power")
+	_expect(errors, world.summary_for(block).power_alert, "RegionSummary flags the unpowered R")
+	_apply_ok(errors, world, A, GameCommand.place_power(2, 2), "plant back")
+	_expect_counts(errors, world, block, SliceConstants.TIER_POP[0], SliceConstants.TIER_JOBS[0], "power restored")
+	# Zoned but unserved tiles add nothing: covered without a road, roaded without power.
+	_apply_ok(errors, world, A, GameCommand.set_zone(4, 4, R), "R without a road")
+	_apply_ok(errors, world, A, GameCommand.set_zone(7, 7, R), "R outside the square")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(7, 7), Vector2i(6, 7)), "road for the dark R")
+	_expect(errors, world.tile_at(4, 4).power_covered and not world.is_served(4, 4) and not world.tile_at(7, 7).power_covered and not world.is_served(7, 7), "unserved tiles are not counted")
+	_expect_counts(errors, world, block, SliceConstants.TIER_POP[0], SliceConstants.TIER_JOBS[0], "unserved R tiles add nothing")
+	# Growth of an unserved tile is impossible, so its tier stays 0 and so does its count.
+	for tick in 4:
+		world.sim_tick(tick + 1)
+	_expect(errors, world.tile_at(4, 4).building_tier == 0 and world.tile_at(7, 7).building_tier == 0, "unserved tiles do not grow")
+	# Serving them later counts them at once.
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(4, 4), Vector2i(4, 5)), "road for the covered R")
+	_expect(errors, world.is_served(4, 4) and world.population(A) == world.summary_for(block).population and world.population(A) == SliceConstants.TIER_POP[world.tile_at(0, 0).building_tier] + SliceConstants.TIER_POP[0], "a road brings the covered R into the count (pop %d)" % world.population(A))
+	# Restore rebuilds the same counts.
+	var restored = WorldStateScript.from_save_dict(JSON.parse_string(JSON.stringify(world.to_save_dict())))
+	_expect(errors, restored != null and restored.population(A) == world.population(A) and restored.jobs(A) == world.jobs(A) and restored.is_served(4, 4) and not restored.is_served(7, 7), "restored ledger counts the served tiles only")
+
+
+## Population and jobs as the ledger, the block summary, the FactionState and the
+## score report them.
+func _expect_counts(errors: Array[String], world, block: InterestId, pop: int, jobs: int, label: String) -> void:
+	var state: FactionState = world.faction_states()[A]
+	var summary: RegionSummary = world.summary_for(block)
+	var score: ScoreTick = world.score(0)
+	_expect(errors, world.population(A) == pop and world.jobs(A) == jobs, "%s: ledger pop %d jobs %d (want %d / %d)" % [label, world.population(A), world.jobs(A), pop, jobs])
+	_expect(errors, state.population == pop and state.jobs == jobs, "%s: FactionState pop %d jobs %d" % [label, state.population, state.jobs])
+	_expect(errors, summary.population == pop, "%s: RegionSummary pop %d" % [label, summary.population])
+	_expect(errors, is_equal_approx(score.factions[A].pop_raw, float(pop)), "%s: score pop_raw %s" % [label, score.factions[A].pop_raw])
+
+
 # --- Builders --------------------------------------------------------------------
+
+
+## An empty StarterCity.Plan at origin (0,0) with its plant; the caller adds edges
+## and lots, WorldState.seed_plan() builds it without charging.
+func _plan(plant: Vector2i):
+	var plan = StarterCityScript.Plan.new()
+	plan.origin = Vector2i.ZERO
+	plan.plant = plant
+	return plan
+
+
+## Edges between consecutive cells.
+func _add_path(plan, cells: Array[Vector2i]) -> void:
+	for i in range(1, cells.size()):
+		plan.edges.append([cells[i - 1], cells[i]])
 
 
 func _world(pace: float = TEST_PACE):
@@ -835,15 +1244,17 @@ func _brownout_count(world, origin: Vector2i) -> int:
 	return count
 
 
-## Σ (tier + 1) of the plan once every R and C lot stands at BUILDING_TIER_MAX and
-## the factories stay where they start.
+## Σ (tier + 1) of the plan once every lot stands at BUILDING_TIER_MAX.
 func _grown_load(plan) -> int:
+	return plan.lots.size() * (SliceConstants.BUILDING_TIER_MAX + 1)
+
+
+## Σ building_tier over the whole map.
+func _tier_total(world) -> int:
 	var total := 0
-	for lot in plan.lots:
-		if int(lot[1]) == SliceConstants.Zone.I:
-			total += int(lot[2]) + 1
-		else:
-			total += SliceConstants.BUILDING_TIER_MAX + 1
+	for y in SliceConstants.MAP_SIZE:
+		for x in SliceConstants.MAP_SIZE:
+			total += world.tile_at(x, y).building_tier
 	return total
 
 
