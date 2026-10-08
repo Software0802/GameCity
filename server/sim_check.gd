@@ -1,10 +1,13 @@
 extends SceneTree
 
-## Headless check of the M2B simulation rules in server/world_state.gd and server/sim/.
+## Headless check of the M2B simulation rules in server/world_state.gd and server/sim/,
+## plus the starter town every faction gets on a new round (server/sim/starter_city.gd).
 ##   godot --headless --path . -s res://server/sim_check.gd
 ## Every scenario builds its own WorldState at pace 0.01 (one tick = 100 sim seconds,
 ## so a tier step takes two ticks) unless it says otherwise. Prints SIM_OK plus one
 ## SIM_PERF line and exits 0, or prints each failure and exits 1.
+## Power coverage is the (2 × POWER_RADIUS + 1)² square around a plant; the capacity
+## scenarios derive their building counts from POWER_PLANT_CAPACITY.
 
 const WorldStateScript = preload("res://server/world_state.gd")
 const GrowthModelScript = preload("res://server/sim/growth_model.gd")
@@ -34,6 +37,8 @@ func _initialize() -> void:
 	_check_income(errors)
 	_check_event_quantization(errors)
 	_check_zone_change(errors)
+	_check_starter_city(errors)
+	_check_starter_smoke_b(errors)
 	_check_perf(errors)
 	if errors.is_empty():
 		print("SIM_OK")
@@ -212,25 +217,30 @@ func _check_no_power(errors: Array[String]) -> void:
 	_expect(errors, is_zero_approx(world.satisfaction_raw(0, 0)), "R without power has zero satisfaction")
 
 
-## 21 tier-0 buildings inside one plant's radius load it to 21 > 20.
+## POWER_PLANT_CAPACITY + 1 tier-0 buildings inside one plant's square load it one
+## over capacity. The plant sits at (3,3) so its square holds the whole spawn block.
 func _check_brownout(errors: Array[String]) -> void:
 	var world = _world()
 	world.free_build = true
 	var plant := Vector2i(3, 3)
+	var cap := SliceConstants.POWER_PLANT_CAPACITY
 	_apply_ok(errors, world, A, GameCommand.place_power(plant.x, plant.y), "plant")
-	var inside := _diamond_in_spawn(plant, SliceConstants.POWER_RADIUS)
-	_expect(errors, inside.size() > SliceConstants.POWER_PLANT_CAPACITY, "spawn holds enough tiles in the radius")
+	var inside := _square_in_spawn(plant, SliceConstants.POWER_RADIUS)
+	_expect(errors, inside.size() == WorldStateScript.SPAWN_SIZE * WorldStateScript.SPAWN_SIZE - 1, "plant at (3,3) covers the whole spawn block (%d tiles)" % inside.size())
+	if inside.size() <= cap:
+		errors.append("brownout scenario needs more than POWER_PLANT_CAPACITY=%d tiles under one plant, the spawn offers %d" % [cap, inside.size()])
+		return
 	var alerted := false
 	var placed := 0
 	for cell in inside:
-		if placed >= SliceConstants.POWER_PLANT_CAPACITY + 1:
+		if placed >= cap + 1:
 			break
 		var result: Dictionary = world.apply(A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C))
 		_expect(errors, result["reason"] == ReasonCode.Id.OK, "zone C at %s" % cell)
 		placed += 1
 		var load: int = world.plant_load(plant.x, plant.y)
 		_expect(errors, load == placed, "plant load counts tier+1 per building (%d after %d)" % [load, placed])
-		var brown := load > SliceConstants.POWER_PLANT_CAPACITY
+		var brown := load > cap
 		_expect(errors, world.tile_at(cell.x, cell.y).brownout == brown, "brownout flag after %d buildings" % placed)
 		for event in result["events"]:
 			if event.kind == ServerEvent.Kind.POWER_ALERT and event.power_alert.brownout and event.power_alert.x == plant.x and event.power_alert.y == plant.y:
@@ -238,9 +248,11 @@ func _check_brownout(errors: Array[String]) -> void:
 		if brown:
 			_expect(errors, _tile_delta_for(result["events"], plant.x, plant.y) != null and _tile_delta_for(result["events"], plant.x, plant.y).tile_delta.brownout, "brownout TileDelta reaches the plant tile")
 	_expect(errors, alerted, "PowerAlert(brownout=true) sent when the plant overloads")
-	_expect(errors, world.tile_at(0, 7).brownout == false and not world.tile_at(0, 7).power_covered, "tile outside the radius untouched")
+	var outside := Vector2i(plant.x + SliceConstants.POWER_RADIUS + 1, plant.y + SliceConstants.POWER_RADIUS + 1)
+	_expect(errors, world.tile_at(outside.x, outside.y).brownout == false and not world.tile_at(outside.x, outside.y).power_covered, "tile outside the square untouched")
+	_expect(errors, world.tile_at(plant.x + SliceConstants.POWER_RADIUS, plant.y + SliceConstants.POWER_RADIUS).power_covered, "square corner is covered")
 	var states: Array = world.faction_states()
-	_expect(errors, states[A].power_capacity == SliceConstants.POWER_PLANT_CAPACITY and states[A].power_load == SliceConstants.POWER_PLANT_CAPACITY + 1, "FactionState power capacity and load")
+	_expect(errors, states[A].power_capacity == cap and states[A].power_load == cap + 1, "FactionState power capacity and load")
 	# An overloaded plant gives no actual power: served R stays dark and does not grow.
 	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(3, 0), Vector2i(4, 0)), "road for the brownout R")
 	_apply_ok(errors, world, A, GameCommand.set_zone(3, 0, SliceConstants.Zone.R), "R under brownout")
@@ -306,14 +318,18 @@ func _check_pollution_cross_owner(errors: Array[String]) -> void:
 	_expect(errors, is_zero_approx(world.pollution_raw(victim.x, victim.y)) and is_zero_approx(world.tile_at(victim.x, victim.y).pollution), "pollution returns to zero")
 
 
-## 15 buildings under one plant fit in 20 but not in 20 × CRISIS_CAPACITY_FACTOR.
+## POWER_PLANT_CAPACITY tier-0 buildings under one plant fit exactly, but not in
+## POWER_PLANT_CAPACITY × CRISIS_CAPACITY_FACTOR.
 func _check_crisis(errors: Array[String]) -> void:
 	var world = _world()
 	world.free_build = true
 	var plant := Vector2i(3, 3)
 	_apply_ok(errors, world, A, GameCommand.place_power(plant.x, plant.y), "plant")
-	var inside := _diamond_in_spawn(plant, SliceConstants.POWER_RADIUS)
-	var load := 15
+	var inside := _square_in_spawn(plant, SliceConstants.POWER_RADIUS)
+	var load: int = SliceConstants.POWER_PLANT_CAPACITY
+	if inside.size() < load:
+		errors.append("crisis scenario needs POWER_PLANT_CAPACITY=%d tiles under one plant, the spawn offers %d" % [load, inside.size()])
+		return
 	for cell in inside.slice(0, load):
 		_apply_ok(errors, world, A, GameCommand.set_zone(cell.x, cell.y, SliceConstants.Zone.C), "C at %s" % cell)
 	world.sim_tick(1)
@@ -489,11 +505,170 @@ func _check_zone_change(errors: Array[String]) -> void:
 	_expect(errors, world.tile_at(0, 0).has_building and world.tile_at(0, 0).building_tier == 0, "same zone on a demolished lot rebuilds at tier 0")
 
 
+## The starter town (server/sim/starter_city.gd) both factions get on a new round:
+## one plant whose square covers the whole block, the 田 roads with lanes, 16
+## tier-1 buildings (9 R / 4 C / 3 I) on road tiles, nothing charged, timers at 0.
+## At pace 0.01 every R and C lot reaches tier 2 on tick 2 while the factories stay
+## at tier 1 (their own pollution keeps them under SAT_UP); through tick 20 nothing
+## falls back or browns out. The load figures are what POWER_PLANT_CAPACITY has to
+## carry: the town at the start, the town fully grown, and the storm must still bite.
+func _check_starter_city(errors: Array[String]) -> void:
+	var world = _world()
+	_expect(errors, world.seed_starter_cities() == 2, "seed_starter_cities seeds both blocks")
+	_expect(errors, world.seed_starter_cities() == 0, "second seed call is a no-op")
+	var cap := SliceConstants.POWER_PLANT_CAPACITY
+	for faction in [A, B]:
+		var plan = WorldStateScript.starter_plan(faction)
+		var origin: Vector2i = plan.origin
+		var tag := "F%d" % faction
+		_expect(errors, is_equal_approx(world.treasury(faction), float(SliceConstants.START_TREASURY)), "%s starter town is free" % tag)
+		_expect(errors, plan.building_count() >= 14, "%s plan holds at least 14 buildings (got %d)" % [tag, plan.building_count()])
+		_expect(errors, plan.edges.size() >= 12, "%s plan holds at least 12 edges (got %d)" % [tag, plan.edges.size()])
+		_expect(errors, plan.power_load() <= cap, "%s starter load %d must fit POWER_PLANT_CAPACITY %d" % [tag, plan.power_load(), cap])
+		_expect(errors, _grown_load(plan) <= cap, "%s grown starter load %d must fit POWER_PLANT_CAPACITY %d" % [tag, _grown_load(plan), cap])
+		_expect(errors, int(floor(float(cap) * SliceConstants.CRISIS_CAPACITY_FACTOR)) < _grown_load(plan), "%s grid storm must bite the grown town (%d vs %d)" % [tag, int(floor(float(cap) * SliceConstants.CRISIS_CAPACITY_FACTOR)), _grown_load(plan)])
+		var plants := 0
+		var tier_one := 0
+		var covered_buildings := true
+		var covered_block := true
+		var on_road := true
+		var timers_zero := true
+		var bare_road_tiles := 0
+		for y in WorldStateScript.SPAWN_SIZE:
+			for x in WorldStateScript.SPAWN_SIZE:
+				var tile: TileDelta = world.tile_at(origin.x + x, origin.y + y)
+				_expect(errors, tile.owner == faction, "%s block tile %s stays owned" % [tag, Vector2i(x, y)])
+				if world.has_power_source(tile.x, tile.y):
+					plants += 1
+				if not tile.power_covered:
+					covered_block = false
+				if tile.has_building:
+					if tile.building_tier == 1:
+						tier_one += 1
+					if not tile.power_covered:
+						covered_buildings = false
+					if not _has_road(world, tile.x, tile.y):
+						on_road = false
+					if not is_zero_approx(world.tier_timer(tile.x, tile.y)):
+						timers_zero = false
+				elif _has_road(world, tile.x, tile.y):
+					bare_road_tiles += 1
+		_expect(errors, plants == 1, "%s block has one plant (got %d)" % [tag, plants])
+		_expect(errors, tier_one >= 14, "%s block has at least 14 tier-1 buildings (got %d)" % [tag, tier_one])
+		_expect(errors, covered_buildings and covered_block, "%s whole block is power_covered" % tag)
+		_expect(errors, on_road, "%s every building is on a road" % tag)
+		_expect(errors, timers_zero, "%s tier timers start at 0" % tag)
+		_expect(errors, bare_road_tiles >= plan.empty_lots.size() + 3, "%s leaves road tiles free for the player" % tag)
+		_expect(errors, world.edges_in_block(InterestId.from_tile(origin.x, origin.y)).size() >= 12, "%s block has at least 12 edges" % tag)
+		_expect(errors, _brownout_count(world, origin) == 0, "%s no brownout after seeding" % tag)
+		var state: FactionState = world.faction_states()[faction]
+		_expect(errors, state.population > 0 and state.jobs > state.population, "%s population %d > 0 and jobs %d exceed it" % [tag, state.population, state.jobs])
+		_expect(errors, state.demand_r > 0.0 and state.demand_c > 0.0 and state.demand_i > 0.0, "%s every demand gate open at the start (%s %s %s)" % [tag, state.demand_r, state.demand_c, state.demand_i])
+		_expect(errors, state.power_load == plan.power_load() and state.power_capacity == cap, "%s FactionState power %d/%d" % [tag, state.power_load, state.power_capacity])
+	var plan_a = WorldStateScript.starter_plan(A)
+	var r_lots: int = plan_a.count_zone(SliceConstants.Zone.R)
+	var c_lots: int = plan_a.count_zone(SliceConstants.Zone.C)
+	var i_lots: int = plan_a.count_zone(SliceConstants.Zone.I)
+	# Growth: tick 1 keeps every tier, tick 2 lifts every R and C lot, nothing moves after.
+	var tick1: Array = world.sim_tick(1)
+	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == [0, plan_a.building_count(), 0], "tick 1 keeps every starter building at tier 1")
+	_expect(errors, _count_kind(tick1, ServerEvent.Kind.POWER_ALERT) == 0, "tick 1 sends no PowerAlert")
+	for lot in plan_a.lots:
+		var cell: Vector2i = lot[0]
+		var sat: float = world.satisfaction_raw(cell.x, cell.y)
+		if int(lot[1]) == SliceConstants.Zone.I:
+			_expect(errors, sat > SliceConstants.SAT_DOWN and sat < SliceConstants.SAT_UP, "factory %s sits between SAT_DOWN and SAT_UP (%.3f)" % [cell, sat])
+		else:
+			_expect(errors, sat >= SliceConstants.SAT_UP, "lot %s satisfied enough to grow (%.3f)" % [cell, sat])
+	world.sim_tick(2)
+	var grown := [0, i_lots, r_lots + c_lots]
+	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == grown and _tier_histogram(world, WorldStateScript.SPAWN_B) == grown, "tick 2 lifts every R and C lot to tier 2 in both blocks (A %s B %s)" % [_tier_histogram(world, WorldStateScript.SPAWN_A), _tier_histogram(world, WorldStateScript.SPAWN_B)])
+	_expect(errors, world.population(A) == r_lots * SliceConstants.TIER_POP[2], "grown population")
+	var income_grown: float = world.faction_states()[A].income_per_sec * TEST_PACE
+	_expect(errors, income_grown > 0.0, "grown starter town earns money (%.3f/s at pace 1.0)" % income_grown)
+	for tick in range(3, 21):
+		world.sim_tick(tick)
+		for faction in [A, B]:
+			var origin: Vector2i = WorldStateScript.starter_plan(faction).origin
+			_expect(errors, _tier_histogram(world, origin) == grown, "tick %d F%d keeps the grown town (%s)" % [tick, faction, _tier_histogram(world, origin)])
+			_expect(errors, _brownout_count(world, origin) == 0, "tick %d F%d no brownout" % [tick, faction])
+			var state: FactionState = world.faction_states()[faction]
+			_expect(errors, state.demand_r > 0.0 and state.demand_c > 0.0 and state.demand_i > 0.0, "tick %d F%d gates open" % [tick, faction])
+	# The legacy smoke host still gets its three commands accepted on the town.
+	_apply_ok(errors, world, A, GameCommand.set_zone(0, 0, SliceConstants.Zone.R), "smoke host zone (0,0)")
+	_apply_ok(errors, world, A, GameCommand.add_edge(Vector2i(0, 0), Vector2i(1, 0)), "smoke host edge on an existing road")
+	world.free_build = true
+	_apply_ok(errors, world, A, GameCommand.claim_tile(WorldStateScript.SPAWN_SIZE, 0), "smoke host claim (8,0)")
+	# The empty lots grow when zoned: one more R on a lane reaches tier 1 in two ticks.
+	var lot: Vector2i = plan_a.empty_lots[0]
+	_apply_ok(errors, world, A, GameCommand.set_zone(lot.x, lot.y, SliceConstants.Zone.R), "zone an empty lot")
+	_expect(errors, world.tile_at(lot.x, lot.y).power_covered and _has_road(world, lot.x, lot.y), "empty lot has road and power")
+	world.sim_tick(21)
+	world.sim_tick(22)
+	_expect(errors, world.tile_at(lot.x, lot.y).building_tier == 1, "zoned empty lot grows to tier 1 in two ticks")
+	# Save round trip right after seeding: the town comes back tile for tile.
+	var seeded = _world()
+	seeded.seed_starter_cities()
+	var save: Dictionary = seeded.to_save_dict()
+	var restored = WorldStateScript.from_save_dict(JSON.parse_string(JSON.stringify(save)))
+	if restored == null:
+		errors.append("starter save did not restore")
+		return
+	_expect(errors, restored.seed_starter_cities() == 0, "restored town is not seeded twice")
+	_expect(errors, JSON.stringify(restored.to_save_dict()) == JSON.stringify(save), "restored starter town saves identically")
+	for faction in [A, B]:
+		var origin: Vector2i = WorldStateScript.starter_plan(faction).origin
+		for y in WorldStateScript.SPAWN_SIZE:
+			for x in WorldStateScript.SPAWN_SIZE:
+				var before: TileDelta = seeded.tile_at(origin.x + x, origin.y + y)
+				var after: TileDelta = restored.tile_at(origin.x + x, origin.y + y)
+				if before.to_dict() != after.to_dict():
+					errors.append("restored tile %s differs: %s vs %s" % [Vector2i(before.x, before.y), before.to_dict(), after.to_dict()])
+		var plant: Vector2i = WorldStateScript.starter_plan(faction).plant
+		_expect(errors, restored.has_power_source(plant.x, plant.y), "F%d restored plant" % faction)
+	_expect(errors, restored.population(A) == seeded.population(A) and restored.jobs(A) == seeded.jobs(A), "restored counters match")
+	seeded.sim_tick(1)
+	seeded.sim_tick(2)
+	restored.sim_tick(1)
+	restored.sim_tick(2)
+	_expect(errors, _tier_histogram(restored, WorldStateScript.SPAWN_A) == grown and _tier_histogram(seeded, WorldStateScript.SPAWN_A) == grown, "restored town grows like the original")
+	_perf_note("starter town per block: %d edges, %d buildings (%d R / %d C / %d I), load %d at start and %d grown, capacity %d (storm %d); income %.3f/s at pace 1.0 once grown" % [
+		plan_a.edges.size(), plan_a.building_count(), r_lots, c_lots, i_lots, plan_a.power_load(), _grown_load(plan_a), cap, int(floor(float(cap) * SliceConstants.CRISIS_CAPACITY_FACTOR)), income_grown,
+	])
+
+
+## The smoke's scenario b on faction B (claim the tile west of the spawn, zone it R,
+## road it to the corner) must not unsettle B's town: after 20 ticks both blocks
+## hold the same tiers, B has more population, and B's score leads. That is what
+## run_smoke.sh step 6 (winner = builder) relies on.
+func _check_starter_smoke_b(errors: Array[String]) -> void:
+	var world = _world()
+	world.seed_starter_cities()
+	world.free_build = true
+	var out: Vector2i = WorldStateScript.SPAWN_B + Vector2i(-1, 0)
+	var inn: Vector2i = WorldStateScript.SPAWN_B
+	_apply_ok(errors, world, B, GameCommand.claim_tile(out.x, out.y), "B claims the out tile")
+	_apply_ok(errors, world, B, GameCommand.set_zone(out.x, out.y, SliceConstants.Zone.R), "B zones it R")
+	_apply_ok(errors, world, B, GameCommand.add_edge(out, inn), "B roads it to the corner")
+	_expect(errors, world.tile_at(out.x, out.y).power_covered, "the out tile is inside B's plant square")
+	for tick in 20:
+		world.sim_tick(tick + 1)
+		_expect(errors, _brownout_count(world, WorldStateScript.SPAWN_B) == 0 and not world.tile_at(out.x, out.y).brownout, "tick %d no brownout on B" % (tick + 1))
+	_expect(errors, _tier_histogram(world, WorldStateScript.SPAWN_A) == _tier_histogram(world, WorldStateScript.SPAWN_B), "both blocks hold the same tiers after the smoke's build (%s vs %s)" % [_tier_histogram(world, WorldStateScript.SPAWN_A), _tier_histogram(world, WorldStateScript.SPAWN_B)])
+	_expect(errors, world.tile_at(out.x, out.y).building_tier >= 1, "the smoke's R tile grew")
+	_expect(errors, world.population(B) > world.population(A), "B has more population (%d > %d)" % [world.population(B), world.population(A)])
+	var score: ScoreTick = world.score(0)
+	_expect(errors, score.factions[B].total() > score.factions[A].total(), "B leads the score (%.4f > %.4f)" % [score.factions[B].total(), score.factions[A].total()])
+
+
 ## 100 ticks at pace 0.01 on three maps: empty; a 64×64 city with every tile zoned
-## and plants every six tiles (41 buildings per plant: all dark, no growth, the
-## pass still visits 4096 tiles); and a 64×64 city with one tile in three zoned and
-## plants every four tiles (≈ 14 buildings per plant: everything served, tiers
-## keep moving every two ticks, pollution and congestion churn).
+## and plants every six tiles (81 buildings in every plant's square: all dark, no
+## growth, the pass still visits 4096 tiles); and a 64×64 city with one tile in
+## five zoned and plants every four tiles (≈ 16 buildings per plant, at most 51
+## load units fully grown: everything served, tiers keep moving every two ticks,
+## pollution and congestion churn). The zone cycle 5 R / 2 C / 2 I keeps every
+## demand gate open at any uniform tier and after R and C outgrow the factories,
+## so the city only ever grows and the population check cannot land in a trough.
 func _check_perf(errors: Array[String]) -> void:
 	var empty = _world()
 	var empty_avg := _time_ticks(empty, PERF_TICKS)
@@ -506,7 +681,7 @@ func _check_perf(errors: Array[String]) -> void:
 	_expect(errors, dark.population(A) == dark_stats["r_tiles"], "over-loaded city stays at tier 0 (population %d)" % dark.population(A))
 
 	var live = _world()
-	var live_stats := _build_city(errors, live, 3, 4)
+	var live_stats := _build_city(errors, live, 5, 4)
 	if live_stats.is_empty():
 		return
 	var live_avg := _time_ticks(live, PERF_TICKS)
@@ -515,7 +690,7 @@ func _check_perf(errors: Array[String]) -> void:
 	# The same served city at pace 1.0: timers accumulate but no tier moves inside
 	# 100 ticks, which is the steady-state cost of a real round.
 	var steady = _world(1.0)
-	var steady_stats := _build_city(errors, steady, 3, 4)
+	var steady_stats := _build_city(errors, steady, 5, 4)
 	if steady_stats.is_empty():
 		return
 	var steady_avg := _time_ticks(steady, PERF_TICKS)
@@ -528,9 +703,10 @@ func _check_perf(errors: Array[String]) -> void:
 	]
 
 
-## Faction A claims PERF_SIDE², zones every zone_stride-th tile (R, R, C, I in
+## Faction A claims PERF_SIDE², zones every zone_stride-th tile (5 R, 2 C, 2 I in
 ## turn), lays a road along every row plus an avenue every four rows, and places a
-## plant every plant_stride tiles. Returns counts, or {} when a command failed.
+## plant every plant_stride tiles starting POWER_RADIUS in, so every plant's square
+## is complete. Returns counts, or {} when a command failed.
 func _build_city(errors: Array[String], world, zone_stride: int, plant_stride: int) -> Dictionary:
 	world.free_build = true
 	var side := PERF_SIDE
@@ -542,7 +718,10 @@ func _build_city(errors: Array[String], world, zone_stride: int, plant_stride: i
 				if result["reason"] != ReasonCode.Id.OK:
 					errors.append("perf claim (%d,%d) reason %d" % [x, y, result["reason"]])
 					return {}
-	var zones: Array = [SliceConstants.Zone.R, SliceConstants.Zone.R, SliceConstants.Zone.C, SliceConstants.Zone.I]
+	var zones: Array = [
+		SliceConstants.Zone.R, SliceConstants.Zone.R, SliceConstants.Zone.R, SliceConstants.Zone.R, SliceConstants.Zone.R,
+		SliceConstants.Zone.C, SliceConstants.Zone.C, SliceConstants.Zone.I, SliceConstants.Zone.I,
+	]
 	var active := 0
 	var r_tiles := 0
 	var index := 0
@@ -566,8 +745,8 @@ func _build_city(errors: Array[String], world, zone_stride: int, plant_stride: i
 				world.apply(A, GameCommand.add_edge(Vector2i(x, y), Vector2i(x, y + 1)))
 				edges += 1
 	var plants := 0
-	for y in range(2, side, plant_stride):
-		for x in range(2, side, plant_stride):
+	for y in range(SliceConstants.POWER_RADIUS, side, plant_stride):
+		for x in range(SliceConstants.POWER_RADIUS, side, plant_stride):
 			world.apply(A, GameCommand.place_power(x, y))
 			plants += 1
 	return {
@@ -616,16 +795,56 @@ func _claim_line(errors: Array[String], world, faction: int, start: Vector2i, st
 		cell += step
 
 
-## Tiles of faction A's spawn inside the Manhattan radius around center, excluding
-## the center itself, nearest first.
-func _diamond_in_spawn(center: Vector2i, radius: int) -> Array[Vector2i]:
+## Tiles of faction A's spawn inside the Chebyshev radius around center (the plant's
+## coverage square), excluding the center itself, nearest first.
+func _square_in_spawn(center: Vector2i, radius: int) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	for d in range(1, radius + 1):
 		for y in WorldStateScript.SPAWN_SIZE:
 			for x in WorldStateScript.SPAWN_SIZE:
-				if absi(x - center.x) + absi(y - center.y) == d:
+				if maxi(absi(x - center.x), absi(y - center.y)) == d:
 					cells.append(Vector2i(x, y))
 	return cells
+
+
+func _has_road(world, x: int, y: int) -> bool:
+	for step in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var other := Vector2i(x + step.x, y + step.y)
+		if SliceConstants.in_map(other.x, other.y) and world.find_edge(Vector2i(x, y), other) != null:
+			return true
+	return false
+
+
+## Building tiers of one spawn block as [tier0, tier1, tier2] counts.
+func _tier_histogram(world, origin: Vector2i) -> Array:
+	var hist := [0, 0, 0]
+	for y in WorldStateScript.SPAWN_SIZE:
+		for x in WorldStateScript.SPAWN_SIZE:
+			var tile: TileDelta = world.tile_at(origin.x + x, origin.y + y)
+			if tile.has_building:
+				hist[tile.building_tier] += 1
+	return hist
+
+
+func _brownout_count(world, origin: Vector2i) -> int:
+	var count := 0
+	for y in WorldStateScript.SPAWN_SIZE:
+		for x in WorldStateScript.SPAWN_SIZE:
+			if world.tile_at(origin.x + x, origin.y + y).brownout:
+				count += 1
+	return count
+
+
+## Σ (tier + 1) of the plan once every R and C lot stands at BUILDING_TIER_MAX and
+## the factories stay where they start.
+func _grown_load(plan) -> int:
+	var total := 0
+	for lot in plan.lots:
+		if int(lot[1]) == SliceConstants.Zone.I:
+			total += int(lot[2]) + 1
+		else:
+			total += SliceConstants.BUILDING_TIER_MAX + 1
+	return total
 
 
 func _time_ticks(world, ticks: int) -> float:
