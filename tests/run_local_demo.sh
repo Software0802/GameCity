@@ -31,14 +31,18 @@ trap 'touch "$DEMO/save/stop"; sleep 2; kill "$SERVER_PID" 2>/dev/null; wait "$S
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'Server ready' "$DEMO/server.log" 2>/dev/null && break; sleep 0.5; done
 grep -q 'Server ready' "$DEMO/server.log" || { echo "server did not start:"; tail -n 20 "$DEMO/server.log"; exit 1; }
 
-echo "client A: WASD/edge pan, wheel zoom, toolbar 1-8, LMB cast, drag paints, RMB/Esc cancel"
-"$GODOT" --path . -- --join 127.0.0.1 --port "$PORT" --name PlayerA --identity "$DEMO/identity-A.cfg" > "$DEMO/client-A.log" 2>&1 &
-A_PID=$!
+echo "controls: WASD/edge pan, wheel zoom, toolbar 1-8, LMB cast, drag paints, RMB/Esc cancel"
+echo "note: keep both windows at least partly visible; a fully hidden window gets throttled by macOS"
+# Windows are staggered and shrunk so neither fully covers the other (an occluded window
+# can be put to sleep by macOS and its connection then crawls). A starts last and ends frontmost.
+B_PID=""
 if [ "${1:-}" = "--two" ]; then
-	sleep 1
-	"$GODOT" --path . -- --join 127.0.0.1 --port "$PORT" --name PlayerB --identity "$DEMO/identity-B.cfg" > "$DEMO/client-B.log" 2>&1 &
+	"$GODOT" --path . --position 480,300 --resolution 1024x640 -- --join 127.0.0.1 --port "$PORT" --name PlayerB --identity "$DEMO/identity-B.cfg" > "$DEMO/client-B.log" 2>&1 &
 	B_PID=$!
-	wait "$B_PID" 2>/dev/null
+	sleep 2
 fi
+"$GODOT" --path . --position 40,60 --resolution 1024x640 -- --join 127.0.0.1 --port "$PORT" --name PlayerA --identity "$DEMO/identity-A.cfg" > "$DEMO/client-A.log" 2>&1 &
+A_PID=$!
 wait "$A_PID" 2>/dev/null
+[ -n "$B_PID" ] && wait "$B_PID" 2>/dev/null
 echo "clients closed; stopping server (saves first)"

@@ -39,7 +39,10 @@ var ever_connected: bool = false
 var last_failure: String = ""
 
 var _active := false
-var _connect_elapsed := 0.0
+## Wall-clock marks: a throttled process (macOS App Nap on an occluded window) delivers
+## _process at ~1 Hz, so timeouts measured in accumulated delta would stretch for minutes.
+var _connect_started_ms := 0
+var _retry_due_ms := 0
 
 
 func _ready() -> void:
@@ -85,12 +88,11 @@ func _process(delta: float) -> void:
 		return
 	match state:
 		State.OFFLINE:
-			retry_left -= delta
+			retry_left = maxf(0.0, float(_retry_due_ms - Time.get_ticks_msec()) / 1000.0)
 			if retry_left <= 0.0:
 				_try_join()
 		State.CONNECTING:
-			_connect_elapsed += delta
-			if _connect_elapsed > CONNECT_TIMEOUT_SEC:
+			if Time.get_ticks_msec() - _connect_started_ms > int(CONNECT_TIMEOUT_SEC * 1000.0):
 				_fail("timeout")
 		_:
 			pass
@@ -98,7 +100,7 @@ func _process(delta: float) -> void:
 
 func _try_join() -> void:
 	attempts += 1
-	_connect_elapsed = 0.0
+	_connect_started_ms = Time.get_ticks_msec()
 	# The handshake server's GameNet sends its own hello on connect (auto_hello, from
 	# --name / --token) unless told not to; this client sends hello itself with the
 	# token from the identity file, so that path is switched off before every join.
@@ -164,6 +166,7 @@ func _fail(why: String) -> void:
 	if GameNet.has_method("close_peer"):
 		GameNet.close_peer()
 	retry_left = RETRY_SEC
+	_retry_due_ms = Time.get_ticks_msec() + int(RETRY_SEC * 1000.0)
 	_set_state(State.OFFLINE)
 
 

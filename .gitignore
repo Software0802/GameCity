@@ -23,3 +23,6 @@ Thumbs.db
 
 # Claude Code subagent worktrees
 .claude/worktrees/
+
+# local demo state (tests/run_local_demo.sh)
+.demo/
