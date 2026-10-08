@@ -4,7 +4,8 @@ extends Control
 ## Left tool column (design-v2 "操作"): claim, zone R / C / I, clear zone, road,
 ## power plant, demolish, and the tax-rate slider. Buttons are toggles in one
 ## group; the active tool is what PlayInput casts with the left mouse button.
-## Keys 1–8 select tools, right mouse button or Esc clears the tool.
+## Keys 1–8 select tools, a right click (not a right drag, which tilts the camera) or
+## Esc clears the tool.
 ##
 ## Tool → command (PlayInput):
 ##   CLAIM       left click         ClaimTile(x, y)
@@ -129,7 +130,7 @@ func _ready() -> void:
 	column.add_child(slider)
 
 	var hint := Label.new()
-	hint.text = "LMB cast · drag paints\nRMB / Esc cancel"
+	hint.text = "LMB cast · drag paints\nRMB click / Esc cancel"
 	hint.add_theme_font_size_override("font_size", FONT_SMALL)
 	hint.add_theme_color_override("font_color", Palette.HUD_TEXT_2)
 	column.add_child(hint)

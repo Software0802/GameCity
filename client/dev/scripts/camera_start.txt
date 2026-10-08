@@ -1,0 +1,9 @@
+# Opening view on a real dedicated server (faction A, the first player to join): no camera
+# lines, the view is where WELCOME put it: A's spawn block centre, 8 tiles (240 m) tall,
+# orthographic, 65° pitch, looking north. Camera only, so it works at any --resolution.
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . --resolution 1280x800 -- --join 127.0.0.1 --port 24690 --name CamA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_start.txt --screenshot client/dev/screenshots/camera_start.png --screenshot-frames 240
+wait 150
+dump
+wait 60

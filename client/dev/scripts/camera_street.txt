@@ -1,0 +1,15 @@
+# Perspective street view on a live server (faction A, the first player to join): 90 m view,
+# 30° pitch, then V through the real key path (CameraRig._unhandled_input) switches the
+# projection; the focus distance follows the size so the framing stays about the same.
+# Pointer positions come from tile_to_screen, so the window must be the design scale (1280 wide).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . --resolution 1280x800 -- --join 127.0.0.1 --port 24690 --name CamA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_street.txt --screenshot client/dev/screenshots/camera_street.png --screenshot-frames 300
+wait 150
+zoom 90
+pitch 30
+hover 4 4
+key V 1
+wait 10
+dump
+wait 60

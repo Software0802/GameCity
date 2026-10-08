@@ -17,14 +17,18 @@ extends Node3D
 ##   --screenshot-frames <n>      N above (default 150)
 ##   --screenshot-seconds <s>     wall-clock delay after MatchStart instead of frames
 ##   --input-script <path>        replay synthetic input (client/dev/input_script.gd)
+##
+## Keys (CameraRig unless noted): WASD / screen edges pan, wheel zooms about the pointed
+## ground point, right drag or Q / E tilts, middle drag or left / right arrows orbit, R resets
+## pitch and yaw, V toggles the perspective street view, F11 toggles fullscreen (here),
+## 1-8 pick tools, right click or Esc clears the tool (PlayInput).
 
 const SCREENSHOT_FRAMES_DEFAULT := 150
 const STUB_IDENTITY_PATH := "user://identity_stub.cfg"
-## Ortho size after WELCOME, first connection and reconnects alike: 12 tiles (360 m), the
-## same convention as CameraRig.SIZE_DEFAULT (40 tiles). The 8-tile spawn block then
-## fills about 60% of the screen height with its lots and streets readable and neutral
-## land around it to claim.
-const START_VIEW_SIZE := 12.0 * CameraRig.TILE
+## View size after WELCOME, first connection and reconnects alike: 8 tiles (240 m), the
+## same convention as CameraRig.SIZE_DEFAULT (40 tiles). The 8-tile spawn block then fills
+## the screen height, close enough to read the buildings, with the wheel for more.
+const START_VIEW_SIZE := 8.0 * CameraRig.TILE
 
 @onready var camera: CameraRig = $Camera
 @onready var world: WorldView = $World
@@ -56,6 +60,10 @@ var _was_started := false
 
 
 func _ready() -> void:
+	# project.godot stretches canvas items from a 1280×720 design size and letterboxes any other
+	# aspect (a 1280×800 window rendered a 1280×720 viewport between black bars); expanding the
+	# design area instead lets the view and the HUD fill the window at every size and in fullscreen.
+	get_tree().root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
 	_size_ground()
 	session = ClientSession.new()
 	session.name = "Session"
@@ -151,7 +159,7 @@ func _on_session_updated() -> void:
 
 
 ## Every WELCOME, the first one and each reconnect, returns the camera to the faction's
-## spawn block at the opening zoom.
+## spawn block at the opening zoom, orthographic, default pitch, looking north.
 func _on_welcomed(welcome: ServerWelcome) -> void:
 	_focus_start_view(welcome.faction)
 
@@ -159,8 +167,35 @@ func _on_welcomed(welcome: ServerWelcome) -> void:
 func _focus_start_view(faction: int) -> void:
 	_focused_faction = faction
 	var spawn := WorldState.spawn_block(faction)
+	camera.set_perspective_mode(false)
+	camera.reset_view()
 	camera.focus_block(spawn.block_x, spawn.block_y)
 	camera.set_ortho_size(START_VIEW_SIZE)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and is_fullscreen_key(event):
+		toggle_fullscreen()
+		get_viewport().set_input_as_handled()
+
+
+## F11, or the macOS "Enter Full Screen" chord Ctrl+Cmd+F (macOS binds the F11 function key to
+## Show Desktop by default, so a Mac keyboard may never deliver it to the window).
+static func is_fullscreen_key(event: InputEventKey) -> bool:
+	if event.keycode == KEY_F11:
+		return true
+	return event.keycode == KEY_F and event.ctrl_pressed and event.meta_pressed
+
+
+## Borderless fullscreen on the window's screen; a second press returns to the window.
+func toggle_fullscreen() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var mode := DisplayServer.window_get_mode()
+	if mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 
 func _on_camera_block_changed(block_x: int, block_y: int) -> void:

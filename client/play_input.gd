@@ -3,8 +3,11 @@ extends Node
 
 ## Mouse → camera ray → ground plane → tile → GameCommand. The active Toolbar tool
 ## decides the command; the left button casts, holding it paints zones tile by tile
-## and lays roads edge by edge, the right button clears the tool. Events that land
+## and lays roads edge by edge, a right click clears the tool. Events that land
 ## on HUD controls never arrive here (the GUI consumes them first).
+##
+## A right press that moves more than CameraRig.DRAG_PX before release is a camera
+## tilt (CameraRig reads it), not a click: the tool stays. Same rule, same constant.
 ##
 ## A fast drag can skip tiles; the gap is filled along a Manhattan path (x first,
 ## then y) so every road step stays orthogonal and every zone tile is visited once.
@@ -32,6 +35,9 @@ var dragging: bool = false
 
 var _drag_last: Vector2i = CameraRig.NO_TILE
 var _drag_sent: Dictionary = {}
+var _right_down := false
+var _right_origin := Vector2.ZERO
+var _right_dragged := false
 
 
 func setup(p_session: ClientSession, p_camera: CameraRig, p_toolbar: Toolbar, p_world: WorldView) -> void:
@@ -42,12 +48,28 @@ func setup(p_session: ClientSession, p_camera: CameraRig, p_toolbar: Toolbar, p_
 	toolbar.tool_changed.connect(func(_tool: int) -> void: _refresh_hover_color())
 
 
-## Right button cancels the tool wherever it lands, including over the HUD, so it
-## is read before the GUI gets the event; it is not consumed.
+## A right click cancels the tool wherever it lands, including over the HUD, so it is
+## read before the GUI gets the event; it is not consumed. The press ends any paint
+## drag at once; the cancel waits for the release and is skipped when the pointer
+## moved more than the drag threshold in between (that was a camera tilt).
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-		_end_drag()
-		toolbar.set_tool(Toolbar.Tool.NONE)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed:
+			_end_drag()
+			_right_down = true
+			_right_origin = event.position
+			_right_dragged = false
+		elif _right_down:
+			_right_down = false
+			if not _right_dragged and not CameraRig.is_drag(_right_origin, event.position):
+				cancel_tool()
+	elif event is InputEventMouseMotion and _right_down and not _right_dragged:
+		_right_dragged = CameraRig.is_drag(_right_origin, event.position)
+
+
+func cancel_tool() -> void:
+	_end_drag()
+	toolbar.set_tool(Toolbar.Tool.NONE)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -66,8 +88,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_end_drag()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE:
-			_end_drag()
-			toolbar.set_tool(Toolbar.Tool.NONE)
+			cancel_tool()
 		elif TOOL_KEYS.has(event.keycode):
 			toolbar.toggle_tool(TOOL_KEYS[event.keycode])
 

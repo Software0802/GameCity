@@ -7,8 +7,8 @@ extends Control
 ## time remaining (ScoreTick.seconds_remaining as d h m s), both totals, the last
 ## five alerts with their time, the crisis banner, the connection line with the
 ## hovered tile's owner / zone / tier / road / power / satisfaction, and the opening
-## guide (StartGuide: four steps with live ticks, a close button, and the completion
-## line) under the alerts in the right column.
+## guide (StartGuide: four steps with live ticks, the camera controls line, a close
+## button, and the completion line) under the alerts in the right column.
 
 const FONT_BODY := 18
 const FONT_SMALL := 15
@@ -47,6 +47,7 @@ var _overlay_label: Label
 var _guide_panel: PanelContainer
 var _guide_close: Button
 var _guide_lines: Array[Label] = []
+var _guide_hint: Label
 var _guide_footer: Label
 var _refresh_left := 0.0
 
@@ -451,6 +452,13 @@ func _build_guide() -> void:
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(line)
 		_guide_lines.append(line)
+	_guide_hint = Label.new()
+	_guide_hint.custom_minimum_size = inner
+	_guide_hint.text = StartGuide.CONTROLS_HINT
+	_guide_hint.add_theme_font_size_override("font_size", FONT_SMALL)
+	_guide_hint.add_theme_color_override("font_color", Palette.HUD_TEXT_2)
+	_guide_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_guide_hint)
 	_guide_footer = Label.new()
 	_guide_footer.custom_minimum_size = inner
 	_guide_footer.add_theme_font_size_override("font_size", FONT_SMALL)

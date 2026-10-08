@@ -21,10 +21,12 @@ const DEFAULT_PORT := 24567
 const RETRY_SEC := 2.0
 const CONNECT_TIMEOUT_SEC := 4.0
 ## ENet drop detection for the server peer: ENet's defaults wait 5–30 s of unanswered
-## pings; these bring a dead server down to 2–4 s so the reconnect prompt is prompt.
+## pings; these bring a dead server down to 2–10 s so the reconnect prompt is prompt. The
+## ceiling is 10 s rather than 4 s because macOS blocks the main loop for several seconds
+## while a window is dragged or resized, and a 4 s ceiling read that as a dead server.
 const ENET_TIMEOUT_LIMIT := 32
 const ENET_TIMEOUT_MIN_MS := 2000
-const ENET_TIMEOUT_MAX_MS := 4000
+const ENET_TIMEOUT_MAX_MS := 10000
 
 var identity: ClientIdentity = null
 var host: String = DEFAULT_HOST

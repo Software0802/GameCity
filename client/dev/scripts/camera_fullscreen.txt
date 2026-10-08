@@ -1,0 +1,11 @@
+# Fullscreen HUD layout on a live server (faction A, the first player to join): F11 through the
+# real key path (presentation.gd _unhandled_input) after WELCOME, then a pause for the window
+# to resize so the HUD relayouts before the screenshot (taken at the screen's resolution).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . --resolution 1280x800 -- --join 127.0.0.1 --port 24690 --name CamA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_fullscreen.txt --screenshot client/dev/screenshots/camera_fullscreen.png --screenshot-frames 400
+wait 150
+key F11 1
+wait 150
+dump
+wait 30
