@@ -40,7 +40,9 @@ const INCOME_PER_JOB_PER_SEC := 0.01
 
 ## Growth placeholders.
 const POWER_RADIUS := 4
-const POWER_PLANT_CAPACITY := 20
+## Load is the sum of (tier + 1) over covered buildings; coverage is the Chebyshev square
+## (2 * POWER_RADIUS + 1)^2 around the plant. 60 holds a grown starter town (45).
+const POWER_PLANT_CAPACITY := 60
 const TIER_UP_SECONDS := 120
 const TIER_DOWN_SECONDS := 180
 const SAT_UP := 0.7

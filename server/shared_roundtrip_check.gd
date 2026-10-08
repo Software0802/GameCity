@@ -65,7 +65,7 @@ func _check_constants(errors: Array[String]) -> void:
 	_expect(errors, is_equal_approx(SliceConstants.TAX_RATE_DEFAULT, 0.10), "TAX_RATE_DEFAULT")
 	_expect(errors, is_equal_approx(SliceConstants.TAX_RATE_MIN, 0.0) and is_equal_approx(SliceConstants.TAX_RATE_MAX, 0.30), "tax rate range")
 	_expect(errors, is_equal_approx(SliceConstants.INCOME_PER_POP_PER_SEC, 0.02) and is_equal_approx(SliceConstants.INCOME_PER_JOB_PER_SEC, 0.01), "income rates")
-	_expect(errors, SliceConstants.POWER_RADIUS == 4 and SliceConstants.POWER_PLANT_CAPACITY == 20, "power radius and capacity")
+	_expect(errors, SliceConstants.POWER_RADIUS == 4 and SliceConstants.POWER_PLANT_CAPACITY == 60, "power radius and capacity")
 	_expect(errors, SliceConstants.TIER_UP_SECONDS == 120 and SliceConstants.TIER_DOWN_SECONDS == 180, "tier seconds")
 	_expect(errors, is_equal_approx(SliceConstants.SAT_UP, 0.7) and is_equal_approx(SliceConstants.SAT_DOWN, 0.3), "satisfaction thresholds")
 	_expect(errors, SliceConstants.TIER_POP == [1, 3, 8] and SliceConstants.TIER_JOBS == [2, 6, 16], "tier tables")

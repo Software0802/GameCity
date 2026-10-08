@@ -139,6 +139,8 @@ func _ready() -> void:
 		])
 	else:
 		world = WorldState.new()
+		# New rounds open with a starter town in each spawn block (sim-economy seam).
+		world.seed_starter_cities()
 		_apply_start_treasury(world)
 		players = Players.new()
 		round_state = ServerPersistence.RoundState.new()

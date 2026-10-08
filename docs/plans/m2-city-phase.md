@@ -17,7 +17,7 @@
 - `SAVE_FORMAT_VERSION = 1`，`PROTOCOL_VERSION = 1`。
 - `FIELD_QUANT = 8`：连续字段按 1/8 量化，只在跨档时发事件。
 - 经济占位：`START_TREASURY 5000`、`COST_CLAIM_BASE 50`、`COST_CLAIM_GROWTH 0.01`（每已占一格加 1%）、`COST_EDGE 20`、`COST_POWER 400`、`UPKEEP_POWER_PER_SEC 0.5`、`TAX_RATE_DEFAULT 0.10`、`TAX_RATE_MIN 0.0`、`TAX_RATE_MAX 0.30`、`INCOME_PER_POP_PER_SEC 0.02`、`INCOME_PER_JOB_PER_SEC 0.01`。
-- 成长占位：`POWER_RADIUS 4`、`POWER_PLANT_CAPACITY 20`、`TIER_UP_SECONDS 120`、`TIER_DOWN_SECONDS 180`、`SAT_UP 0.7`、`SAT_DOWN 0.3`、`TIER_POP = [1, 3, 8]`、`TIER_JOBS = [2, 6, 16]`、`POLLUTION_RADIUS 3`、`CONGESTION_CAPACITY 10`。
+- 成长占位：`POWER_RADIUS 4`、`POWER_PLANT_CAPACITY 60`（2026-10-08 由 20 调高：起始城负载 32、长成 45；覆盖区为以电站为中心的 9×9 切比雪夫方形 81 格，不是曼哈顿菱形）、`TIER_UP_SECONDS 120`、`TIER_DOWN_SECONDS 180`、`SAT_UP 0.7`、`SAT_DOWN 0.3`、`TIER_POP = [1, 3, 8]`、`TIER_JOBS = [2, 6, 16]`、`POLLUTION_RADIUS 3`、`CONGESTION_CAPACITY 10`。
 - 危机：`CRISIS_AT_FRACTION 0.5`、`CRISIS_DURATION_SEC 90`、`CRISIS_CAPACITY_FACTOR 0.5`。
 - 删除 `MATCH_MINUTES_*`。保留 `Owner`、`Zone`、`tile_id`、`in_map`、`is_zone`。
 
@@ -122,6 +122,21 @@ M4 打磨项：
 - 黄昏预设未做；SDFGI 未测（`LiveLighting.GI_MODE` 可切）。
 - 远景未订阅块仍是半透明浅色方块；树和车没有按距离裁减。
 - 电站本体仍画不出（等 `has_power_plant` 字段）。
+
+## 开局体验（2026-10-08 晚合入）
+
+- 新一轮开局每个出生块预置起始小镇：55 条边的"田"字路网、1 座电站、16 栋 1 档楼（9 R / 4 C / 3 I）、3 格留空的有路空地；恢复存档不重复播种。布局在 `server/sim/starter_city.gd`，接线在 `match_sim.gd` 新一轮分支。
+- 客户端 WELCOME 后相机对准出生块（12 格宽），右侧四步引导条，分区无路即提示，拒绝原因用玩家语言，状态栏悬停信息。
+- `server/tools/make_demo_save.gd` 生成两座 20×20 已发展城区的存档；`tests/run_local_demo.sh --city` 直接以它开局。
+- `POWER_PLANT_CAPACITY` 20 → 60，电力覆盖改为 9×9 方形。
+
+### 模拟调参待办（起始城 worker 用数字证实的问题，影响玩家体感）
+
+1. **街上相邻的楼永不生长**：`CONGESTION_CAPACITY 10` 下相邻两栋边负载 3 → 拥堵 0.3 → 量化 0.25 → 满意度 0.9 × 0.75 = 0.675 < `SAT_UP` 0.7；隔一格也是 0.675，要隔两格才长。玩家在现有楼旁分区会看到"不长"。
+2. **加电站救不了欠压**：重叠覆盖的电站各自全额计负载，旁边再放一座不分摊；只能拆楼或去 9 格外建新区。应按覆盖电站数均摊或按连通组合并容量。
+3. **工业永远卡 1 档**：自身排放 0.18 再乘任何拥堵就低于 0.7。工业区不该被自己的污染压住。
+4. 人口按档位无条件计数（tier 0 的 R 无路无电也算 1 人），与 design-v2 不符。
+5. 风暴 90 s 短于降档 180 s，长成的城只黑不掉档；是否算"有影响"待定。
 
 ## 不在 M2
 

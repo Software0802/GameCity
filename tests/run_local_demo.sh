@@ -1,8 +1,9 @@
 #!/bin/bash
 # 本机一键演示：起一个专用无头服务器，再开一个（或两个）带窗口的客户端。
 #
-#   tests/run_local_demo.sh            # 一个客户端（阵营 A）
+#   tests/run_local_demo.sh            # 一个客户端（阵营 A），新一轮开局自带起始小镇
 #   tests/run_local_demo.sh --two      # 两个客户端（A 和 B），各自独立身份文件
+#   tests/run_local_demo.sh --city     # 开局就是两座已发展的 20×20 城区（演示存档，仅在没有存档时生成）
 #   DEMO_PACE=1.0 tests/run_local_demo.sh   # 正式节奏（默认 0.05：升档约 6 秒，便于观看）
 #
 # 关闭客户端窗口后脚本会用 stop 文件优雅停掉服务器（存档后退出）。
@@ -16,9 +17,22 @@ PACE=${DEMO_PACE:-0.05}
 ROUND=${DEMO_ROUND_SECONDS:-604800}
 DEMO=./.demo
 mkdir -p "$DEMO/save"
+TWO=0; CITY=0
+for arg in "$@"; do
+	case "$arg" in
+		--two) TWO=1 ;;
+		--city) CITY=1 ;;
+		*) echo "unknown option $arg (use --two, --city)"; exit 2 ;;
+	esac
+done
 
 command -v "$GODOT" >/dev/null || { echo "godot not on PATH (brew install --cask godot)"; exit 1; }
 [ -f .godot/global_script_class_cache.cfg ] || "$GODOT" --headless --path . --import >/dev/null 2>&1
+
+if [ "$CITY" = 1 ] && ! ls "$DEMO"/save/world-*.json >/dev/null 2>&1; then
+	echo "generating the demo city save (two developed 20x20 districts)"
+	"$GODOT" --headless --path . -s res://server/tools/make_demo_save.gd -- --out "$DEMO/demo-city.json" --install "$DEMO/save" --pace "$PACE" 2>&1 | grep -E 'DEMO_SAVE' || { echo "demo save generation failed"; exit 1; }
+fi
 
 echo "server: port $PORT pace $PACE save-dir $DEMO/save (log: $DEMO/server.log)"
 "$GODOT" --headless --path . res://server/main.tscn -- \
@@ -36,7 +50,7 @@ echo "note: keep both windows at least partly visible; a fully hidden window get
 # Windows are staggered and shrunk so neither fully covers the other (an occluded window
 # can be put to sleep by macOS and its connection then crawls). A starts last and ends frontmost.
 B_PID=""
-if [ "${1:-}" = "--two" ]; then
+if [ "$TWO" = 1 ]; then
 	"$GODOT" --path . --position 480,300 --resolution 1024x640 -- --join 127.0.0.1 --port "$PORT" --name PlayerB --identity "$DEMO/identity-B.cfg" > "$DEMO/client-B.log" 2>&1 &
 	B_PID=$!
 	sleep 2

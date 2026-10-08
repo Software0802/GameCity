@@ -671,7 +671,8 @@ else
 	P7=$(pick_port) || fatal_step "no free UDP port"
 	D7="$TMP/step7"
 	mkdir -p "$D7/save"
-	start_server "$LOGS/07-server.log" --port "$P7" --pace "$SMOKE_PACE" --round-seconds 600 --start-treasury "$SMOKE_START_TREASURY" --save-dir "$D7/save" --status-file "$D7/status.json"
+	# pace 1.0: at the test pace the starter town grows within seconds and refills the treasury.
+start_server "$LOGS/07-server.log" --port "$P7" --pace 1.0 --round-seconds 600 --start-treasury "$SMOKE_START_TREASURY" --save-dir "$D7/save" --status-file "$D7/status.json"
 	wait_for_line "$LOGS/07-server.log" "Listen|status" 10 || log "server printed no Listen line in 10s"
 	start_client "$LOGS/07-A.log" --join 127.0.0.1 --port "$P7" --name Alice --identity-file "$D7/identity-A.cfg" --scenario idle --hold-seconds 25
 	A7=$CLIENT_PID
