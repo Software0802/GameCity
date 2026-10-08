@@ -17,7 +17,9 @@ extends RefCounted
 ## objects; only tiles whose wire fields changed are touched and sent, once each.
 ##
 ## Spawn blocks are an example placement derived from SliceConstants.MAP_SIZE:
-## faction A owns [0,SPAWN_SIZE)², faction B the mirrored corner.
+## faction A owns [0,SPAWN_SIZE)², faction B the mirrored corner. A fresh WorldState
+## holds bare spawn blocks; seed_starter_cities() builds the starter town
+## (server/sim/starter_city.gd) into both when a new round starts.
 
 const SimEconomy = preload("res://server/sim/sim_economy.gd")
 const PowerGrid = preload("res://server/sim/power_grid.gd")
@@ -25,6 +27,7 @@ const PollutionField = preload("res://server/sim/pollution_field.gd")
 const RoadNetwork = preload("res://server/sim/road_network.gd")
 const GrowthModel = preload("res://server/sim/growth_model.gd")
 const FieldQuant = preload("res://server/sim/field_quant.gd")
+const StarterCity = preload("res://server/sim/starter_city.gd")
 
 const SPAWN_SIZE := 8
 const SPAWN_A := Vector2i(0, 0)
@@ -178,6 +181,102 @@ func plant_capacity() -> int:
 ## its own treasuries and does not get this call.
 func set_treasury_all(amount: float) -> void:
 	_economy.set_treasury_all(amount)
+
+
+## Starter town for both factions (server/sim/starter_city.gd): the 田 road net,
+## one plant, and tier-1 R / C / I buildings inside each spawn block. Nothing is
+## charged, every tier timer starts at 0, and the TileDeltas and alerts the build
+## produces are dropped (no snapshot has gone out yet). server-core calls this once
+## right after WorldState.new() when a NEW round starts, never for a restored save.
+## A block that already holds a road, a building, or a plant is left alone, so a
+## second call is a no-op. Returns the number of blocks seeded.
+func seed_starter_cities() -> int:
+	if StarterCity.BLOCK != SPAWN_SIZE:
+		push_error("WorldState.seed_starter_cities: StarterCity.BLOCK %d != SPAWN_SIZE %d" % [StarterCity.BLOCK, SPAWN_SIZE])
+		return 0
+	var seeded := 0
+	for faction in SliceConstants.FACTION_COUNT:
+		var origin := _spawn_origin(faction)
+		if _block_built(origin):
+			continue
+		if seed_plan(faction, StarterCity.plan_for(origin)):
+			seeded += 1
+	return seeded
+
+
+## The starter layout of one faction, absolute coordinates (for checks and tools).
+static func starter_plan(faction: int) -> StarterCity.Plan:
+	return StarterCity.plan_for(_spawn_origin(faction))
+
+
+static func _spawn_origin(faction: int) -> Vector2i:
+	if faction == SliceConstants.Owner.FACTION_B:
+		return SPAWN_B
+	return SPAWN_A
+
+
+## True when any tile of the SPAWN_SIZE² block at origin has a road, a building,
+## or a plant.
+func _block_built(origin: Vector2i) -> bool:
+	for y in SPAWN_SIZE:
+		for x in SPAWN_SIZE:
+			var tile := tile_at(origin.x + x, origin.y + y)
+			if tile.has_building or _roads.has_road(tile.id) or _grid.has_plant(tile.id):
+				return true
+	return false
+
+
+## Applies one StarterCity.Plan through the same bookkeeping the commands use,
+## minus the charges and the events: roads, the plant, and the buildings at the
+## tiers the plan names, timers at 0. All or nothing: returns false and changes
+## nothing when a tile is not the faction's, an edge is not orthogonal, or the
+## plant tile already holds a plant. seed_starter_cities() and
+## server/tools/make_demo_save.gd build their towns with this.
+func seed_plan(faction: int, plan: StarterCity.Plan) -> bool:
+	if not SimEconomy.is_faction(faction):
+		return false
+	for edge in plan.edges:
+		var a: Vector2i = edge[0]
+		var b: Vector2i = edge[1]
+		if not SliceConstants.in_map(a.x, a.y) or not SliceConstants.in_map(b.x, b.y) or not EdgeDelta.is_orthogonal(a, b):
+			push_error("WorldState.seed_plan: edge %s-%s invalid" % [a, b])
+			return false
+		if tile_at(a.x, a.y).owner != faction or tile_at(b.x, b.y).owner != faction:
+			push_error("WorldState.seed_plan: edge %s-%s is not on faction %d land" % [a, b, faction])
+			return false
+	if not SliceConstants.in_map(plan.plant.x, plan.plant.y):
+		push_error("WorldState.seed_plan: plant %s outside the map" % plan.plant)
+		return false
+	var plant := tile_at(plan.plant.x, plan.plant.y)
+	if plant.owner != faction or _grid.has_plant(plant.id):
+		push_error("WorldState.seed_plan: plant %s not placeable for faction %d" % [plan.plant, faction])
+		return false
+	for lot in plan.lots:
+		var cell: Vector2i = lot[0]
+		var zone := int(lot[1])
+		if not SliceConstants.in_map(cell.x, cell.y) or tile_at(cell.x, cell.y).owner != faction:
+			push_error("WorldState.seed_plan: lot %s is not on faction %d land" % [cell, faction])
+			return false
+		if not SliceConstants.is_zone(zone) or zone == SliceConstants.Zone.NONE:
+			push_error("WorldState.seed_plan: lot %s has no zone" % cell)
+			return false
+	for edge in plan.edges:
+		_roads.add(edge[0], edge[1])
+	var turned_on := _grid.add_plant(plant.id, faction)
+	_economy.add_plant(faction, 1)
+	for lot in plan.lots:
+		var cell: Vector2i = lot[0]
+		var tile := tile_at(cell.x, cell.y)
+		_detach_building(tile)
+		tile.zone = int(lot[1])
+		tile.has_building = true
+		tile.building_tier = clampi(int(lot[2]), SliceConstants.BUILDING_TIER_MIN, SliceConstants.BUILDING_TIER_MAX)
+		_growth.reset_timer(tile.id)
+		_attach_building(tile)
+	var dirty: Dictionary = {}
+	var alerts: Array = []
+	_settle(dirty, alerts, turned_on)
+	return true
 
 
 ## Grid storm on or off. Capacity changes at once; the CrisisEvent

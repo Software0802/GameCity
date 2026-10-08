@@ -2,12 +2,15 @@ extends RefCounted
 
 ## Power coverage, per-plant load, and brownout. Pure data: tile ids in, tile ids out.
 ##
-## A tile is covered when at least one plant's Manhattan radius POWER_RADIUS
-## reaches it (TileDelta.power_covered). A plant's load is Σ (tier + 1) over the
-## building tiles in its radius, regardless of owner and without sharing between
-## overlapping plants. load > capacity() puts every tile in that plant's radius
-## into brownout; a tile is dark while any overloaded plant covers it. Actual power
-## is covered and not brownout.
+## A tile is covered when it lies inside at least one plant's service square: the
+## (2 × POWER_RADIUS + 1)² tiles around the plant, Chebyshev distance ≤ POWER_RADIUS
+## (TileDelta.power_covered). A square, not a Manhattan diamond, so one plant at
+## the centre of an 8×8 spawn block covers the whole block (81 tiles; the diamond
+## held 41 and left the block's corners dark). A plant's load is Σ (tier + 1) over
+## the building tiles in its square, regardless of owner and without sharing
+## between overlapping plants. load > capacity() puts every tile in that plant's
+## square into brownout; a tile is dark while any overloaded plant covers it.
+## Actual power is covered and not brownout.
 ##
 ## Coverage counts and loads are kept incrementally (add/remove plant, set_weight);
 ## resolve() re-evaluates only the plants marked dirty since the last call, so a tick
@@ -52,8 +55,6 @@ func _init() -> void:
 	var radius := SliceConstants.POWER_RADIUS
 	for dy in range(-radius, radius + 1):
 		for dx in range(-radius, radius + 1):
-			if absi(dx) + absi(dy) > radius:
-				continue
 			_dx.append(dx)
 			_dy.append(dy)
 
@@ -125,7 +126,7 @@ func add_plant(id: int, owner: int) -> PackedInt32Array:
 	var plant := Plant.new()
 	plant.id = id
 	plant.owner = owner
-	plant.tiles = _diamond(id)
+	plant.tiles = _square(id)
 	var load := 0
 	for tile in plant.tiles:
 		_cover[tile] += 1
@@ -245,7 +246,8 @@ func dark_array() -> PackedInt32Array:
 	return _dark
 
 
-func _diamond(id: int) -> PackedInt32Array:
+## Tile ids of the plant's service square, clipped to the map.
+func _square(id: int) -> PackedInt32Array:
 	var tiles := PackedInt32Array()
 	var size := SliceConstants.MAP_SIZE
 	var x := id % size
