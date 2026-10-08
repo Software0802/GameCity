@@ -70,7 +70,7 @@ func _check_constants(errors: Array[String]) -> void:
 	_expect(errors, is_equal_approx(SliceConstants.SAT_UP, 0.7) and is_equal_approx(SliceConstants.SAT_DOWN, 0.3), "satisfaction thresholds")
 	_expect(errors, SliceConstants.TIER_POP == [1, 3, 8] and SliceConstants.TIER_JOBS == [2, 6, 16], "tier tables")
 	_expect(errors, SliceConstants.TIER_POP.size() == SliceConstants.BUILDING_TIER_MAX + 1, "tier table covers every tier")
-	_expect(errors, SliceConstants.POLLUTION_RADIUS == 3 and SliceConstants.CONGESTION_CAPACITY == 10, "pollution and congestion")
+	_expect(errors, SliceConstants.POLLUTION_RADIUS == 3 and SliceConstants.CONGESTION_CAPACITY == 12, "pollution and congestion")
 	_expect(errors, is_equal_approx(SliceConstants.CRISIS_AT_FRACTION, 0.5) and SliceConstants.CRISIS_DURATION_SEC == 90 and is_equal_approx(SliceConstants.CRISIS_CAPACITY_FACTOR, 0.5), "crisis constants")
 	_expect(errors, SliceConstants.Owner.NEUTRAL == -1 and SliceConstants.Owner.FACTION_A == 0 and SliceConstants.Owner.FACTION_B == 1, "Owner ints")
 	_expect(errors, SliceConstants.Zone.NONE == 0 and SliceConstants.Zone.R == 1 and SliceConstants.Zone.C == 2 and SliceConstants.Zone.I == 3, "Zone ints")

@@ -53,7 +53,11 @@ const DEMAND_GATE_CLOSED := 0.3
 const TIER_POP: Array[int] = [1, 3, 8]
 const TIER_JOBS: Array[int] = [2, 6, 16]
 const POLLUTION_RADIUS := 3
-const CONGESTION_CAPACITY := 10
+## Edge load (tier(a) + tier(b) + ½ Σ tiers at the ends of adjacent edges) that saturates an
+## edge; satisfaction is untouched up to half of it. 12 lets a tier-1 lot between two tier-2
+## corridor neighbours (load 6.5) still rise, a full tier-2 corridor (8) is felt but held,
+## a four-way junction among tier-2 (11.5) drops to tier 1.
+const CONGESTION_CAPACITY := 12
 
 ## The one shared mid-round crisis (grid storm).
 const CRISIS_AT_FRACTION := 0.5

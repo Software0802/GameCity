@@ -17,7 +17,7 @@
 - `SAVE_FORMAT_VERSION = 1`，`PROTOCOL_VERSION = 1`。
 - `FIELD_QUANT = 8`：连续字段按 1/8 量化，只在跨档时发事件。
 - 经济占位：`START_TREASURY 5000`、`COST_CLAIM_BASE 50`、`COST_CLAIM_GROWTH 0.01`（每已占一格加 1%）、`COST_EDGE 20`、`COST_POWER 400`、`UPKEEP_POWER_PER_SEC 0.5`、`TAX_RATE_DEFAULT 0.10`、`TAX_RATE_MIN 0.0`、`TAX_RATE_MAX 0.30`、`INCOME_PER_POP_PER_SEC 0.02`、`INCOME_PER_JOB_PER_SEC 0.01`。
-- 成长占位：`POWER_RADIUS 4`、`POWER_PLANT_CAPACITY 60`（2026-10-08 由 20 调高：起始城负载 32、长成 45；覆盖区为以电站为中心的 9×9 切比雪夫方形 81 格，不是曼哈顿菱形）、`TIER_UP_SECONDS 120`、`TIER_DOWN_SECONDS 180`、`SAT_UP 0.7`、`SAT_DOWN 0.3`、`TIER_POP = [1, 3, 8]`、`TIER_JOBS = [2, 6, 16]`、`POLLUTION_RADIUS 3`、`CONGESTION_CAPACITY 10`。
+- 成长占位：`POWER_RADIUS 4`、`POWER_PLANT_CAPACITY 60`（2026-10-08 由 20 调高：起始城负载 32、长成 45；覆盖区为以电站为中心的 9×9 切比雪夫方形 81 格，不是曼哈顿菱形）、`TIER_UP_SECONDS 120`、`TIER_DOWN_SECONDS 180`、`SAT_UP 0.7`、`SAT_DOWN 0.3`、`TIER_POP = [1, 3, 8]`、`TIER_JOBS = [2, 6, 16]`、`POLLUTION_RADIUS 3`、`CONGESTION_CAPACITY 12`（2026-10-08 由 10 调高：满意度改读未量化拥堵并只在超过一半容量后线性惩罚；12 让走廊里夹在两栋 2 档间的后来者（负载 6.5）仍能升档，满 2 档走廊（8）有感但保持，十字路口（11.5）掉 1 档）。
 - 危机：`CRISIS_AT_FRACTION 0.5`、`CRISIS_DURATION_SEC 90`、`CRISIS_CAPACITY_FACTOR 0.5`。
 - 删除 `MATCH_MINUTES_*`。保留 `Owner`、`Zone`、`tile_id`、`in_map`、`is_zone`。
 
@@ -104,7 +104,7 @@ M2A、M2B 全部合入 `chore/agent-coordination`：`tests/run_smoke.sh` 7/7、`
 ## M2 打磨项（已记录，未做）
 
 - `TileDelta` 缺"此格有电站"标记：客户端画不出电站本体，也没有 `RemovePower` 工具入口。client-play 的提议是加 `has_power_plant: bool`（合约改动，服务器端在 `WorldState._copy_tile / _place_power / _remove_power` 填值）。
-- 人口按档位无条件计数：tier 0 的 R 格没路没电也算 1 人口，与 design-v2「R 要形成人口必须同时有路和电」有出入。改法：`TIER_POP` 只在满意度门（有路且有电）通过时计入。
+- ~~人口按档位无条件计数~~ 已改：人口与岗位只计有路且实际有电的楼（2026-10-08 晚）。
 - `RemoveEdge` 没有工具栏入口。
 - HUD 文案为英文（默认字体不含 CJK）；污染没有专门调色板色，暂用 I 区密集色半透明。
 - 升档后 pop 3 > jobs 2 的孤立 R+C 组合会来回跷跷板（需求门 0.3 × 0.9 = 0.27 刚好低于 `SAT_DOWN`），调参项。
@@ -131,6 +131,8 @@ M4 打磨项：
 - `POWER_PLANT_CAPACITY` 20 → 60，电力覆盖改为 9×9 方形。
 
 ### 模拟调参待办（起始城 worker 用数字证实的问题，影响玩家体感）
+
+**第 1–4 条已于 2026-10-08 晚完成**：拥堵因子 = 1 − max(0, (c − 0.5)/0.5)（c 为关联边未量化拥堵均值，`CONGESTION_CAPACITY 12`）；重叠覆盖的格按覆盖电站数均摊负载；污染因子按区权重 R 1 / C ½ / I 0；人口岗位只计有路且实际有电的楼。第 5 条未动。
 
 1. **街上相邻的楼永不生长**：`CONGESTION_CAPACITY 10` 下相邻两栋边负载 3 → 拥堵 0.3 → 量化 0.25 → 满意度 0.9 × 0.75 = 0.675 < `SAT_UP` 0.7；隔一格也是 0.675，要隔两格才长。玩家在现有楼旁分区会看到"不长"。
 2. **加电站救不了欠压**：重叠覆盖的电站各自全额计负载，旁边再放一座不分摊；只能拆楼或去 9 格外建新区。应按覆盖电站数均摊或按连通组合并容量。
