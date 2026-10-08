@@ -1,0 +1,20 @@
+# Frame-time probe at 1080p for the hand-back: the 90 m view at 65° and at 30° (orthographic),
+# then the perspective street view at 30°. WorldView prints VIEW_PERF every 60 frames with
+# --view-perf; the `print` lines label the postures in the log. Camera only (any --resolution).
+# Meant for the demo-city save (server/tools/make_demo_save.gd), whose A city centre is tile 10,10.
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <demo-save-dir> --status-file <tmp>/status.json
+#   godot --path . --resolution 1920x1080 -- --join 127.0.0.1 --port 24690 --name PerfA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_perf.txt --screenshot <tmp>/camera_perf.png --screenshot-frames 1 --view-perf
+wait 150
+focus 10 10
+zoom 90
+pitch 65
+print posture ortho 65
+wait 240
+pitch 30
+print posture ortho 30
+wait 240
+view persp
+print posture persp 30
+wait 240
+dump

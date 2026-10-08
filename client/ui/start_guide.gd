@@ -23,6 +23,9 @@ const STEPS: Array[String] = [
 ]
 const TITLE := "Getting started"
 const DONE_TEXT := "Buildings grow a tier when a lot has road, power and positive demand"
+## Camera controls, one line under the steps (hud.gd). English like the rest of the HUD;
+## 中文对照：滚轮缩放 · 右键拖动俯仰 · 中键拖动旋转 · V 街景 · F11 全屏。
+const CONTROLS_HINT := "Wheel zoom · RMB drag tilt · MMB drag rotate · V street view · F11 fullscreen"
 const DONE_LINGER_MS := 10000
 
 var settings: ClientSettings = null

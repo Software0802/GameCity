@@ -1,0 +1,15 @@
+# 90 m view tilted to 30° through the real right-drag path on a live server (faction A, the
+# first player to join). After WELCOME: zoom to 90 m (3 tiles, the wheel floor), park the pointer
+# on the spawn centre, then a right drag 160 px upward (CameraRig.TILT_DEG_PER_PX 0.25°/px:
+# 65° - 40° clamps at the 30° floor). No tool is armed, so the drag has nothing to cancel.
+# Pointer positions come from tile_to_screen, so the window must be the design scale (1280 wide).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . --resolution 1280x800 -- --join 127.0.0.1 --port 24690 --name CamA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_tilt.txt --screenshot client/dev/screenshots/camera_tilt.png --screenshot-frames 300
+wait 150
+zoom 90
+hover 4 4
+rdrag 0 -160
+wait 10
+dump
+wait 60

@@ -4,8 +4,15 @@ extends WorldEnvironment
 ## Day lighting for the live client (client/main.tscn "Env"), the showcase interactive tier
 ## (showcase_max/scripts/quality.gd "interactive" and lighting.gd "day") applied to the game
 ## camera: Poly Haven HDRI sky through the clamping sky shader, ACES + Adjustments, SSAO medium,
-## glow, no SSIL / SSR / fog, 4096 shadow atlas with one orthographic cascade whose range
-## follows the camera's far plane, MetalFX Temporal at SCALE_3D on the root viewport.
+## glow, no SSIL / SSR / fog, 4096 shadow atlas, MetalFX Temporal at SCALE_3D on the root viewport.
+##
+## Sun shadow follows the camera (CameraRig) every frame. Orthographic view: one orthographic
+## cascade over the camera's tight [near, far] (uniform pixel density over depth, so splitting
+## would only spend atlas on the empty space between camera and city); the rig keeps that range
+## tight at every pitch, so a 30° tilt stays as sharp as 65°. Perspective street view: four
+## parallel splits up to CameraRig.shadow_distance() (a multiple of the focus distance, not the
+## far plane, which sits at the horizon cap when the top edge looks at the sky), the first split
+## ending just past the nearest visible ground and the rest log-spaced (cascade_splits).
 ##
 ## GI: the interactive tier offered SDFGI 3 cascades or no GI. SDFGI re-voxelises static
 ## geometry when a block mesh is replaced and its cascades are centred on a camera that sits
@@ -33,6 +40,13 @@ const SHADOW_ATLAS := 4096
 const SCALE_3D := 0.67
 const SKY_RADIANCE_CLAMP := 3.0
 const SKY_VIEW_CLAMP := 40.0
+## Perspective cascades: the first split ends this far past the nearest visible ground
+## (as a fraction of the shadow reach, clamped), the next two are log-spaced to the reach.
+const SPLIT_NEAR_FACTOR := 1.6
+const SPLIT_MIN := 0.04
+const SPLIT_MAX := 0.25
+const FADE_START_ORTHO := 0.92
+const FADE_START_PERSPECTIVE := 0.8
 
 @export var sun_path: NodePath = ^"../Sun"
 @export var camera_path: NodePath = ^"../Camera"
@@ -60,7 +74,46 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	if sun != null and camera != null:
+		_update_shadows()
+
+
+## Shadow mode, reach and splits for the camera's current projection and depth range. A plain
+## Camera3D (the view check's stress probe) gets the old rule: reach = far plane.
+func _update_shadows() -> void:
+	var rig := camera as CameraRig
+	if rig == null:
 		sun.directional_shadow_max_distance = camera.far
+		return
+	var reach := rig.shadow_distance()
+	if rig.perspective:
+		_set_shadow_mode(DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS)
+		var splits := cascade_splits(rig.shadow_near(), reach)
+		sun.directional_shadow_split_1 = splits[0]
+		sun.directional_shadow_split_2 = splits[1]
+		sun.directional_shadow_split_3 = splits[2]
+		sun.directional_shadow_blend_splits = true
+		sun.directional_shadow_fade_start = FADE_START_PERSPECTIVE
+	else:
+		_set_shadow_mode(DirectionalLight3D.SHADOW_ORTHOGONAL)
+		sun.directional_shadow_blend_splits = false
+		sun.directional_shadow_fade_start = FADE_START_ORTHO
+	sun.directional_shadow_max_distance = reach
+
+
+func _set_shadow_mode(mode: DirectionalLight3D.ShadowMode) -> void:
+	if sun.directional_shadow_mode != mode:
+		sun.directional_shadow_mode = mode
+
+
+## Split fractions (of the shadow reach) for four parallel cascades: the first ends
+## SPLIT_NEAR_FACTOR × the nearest visible ground depth so the bottom of the screen gets a
+## whole cascade, the second and third continue in equal ratios up to the reach.
+static func cascade_splits(near_ground: float, reach: float) -> Array[float]:
+	var first := SPLIT_MIN
+	if reach > 0.0 and is_finite(near_ground):
+		first = clampf(SPLIT_NEAR_FACTOR * near_ground / reach, SPLIT_MIN, SPLIT_MAX)
+	var ratio := pow(1.0 / first, 1.0 / 3.0)
+	return [first, first * ratio, first * ratio * ratio]
 
 
 func _make_environment() -> Environment:
@@ -137,13 +190,13 @@ func _configure_sun(light: DirectionalLight3D) -> void:
 	light.shadow_bias = 0.04
 	light.shadow_normal_bias = 1.4
 	light.shadow_blur = 1.0
-	# one cascade: an orthographic camera has uniform pixel density over depth, so splitting
-	# the range only wastes atlas on the empty space between camera and city
 	light.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	light.directional_shadow_max_distance = camera.far if camera != null else 600.0
-	light.directional_shadow_fade_start = 0.92
+	light.directional_shadow_max_distance = 600.0
+	light.directional_shadow_fade_start = FADE_START_ORTHO
 	light.directional_shadow_pancake_size = 40.0
 	light.sky_mode = DirectionalLight3D.SKY_MODE_LIGHT_AND_SKY
+	if camera != null:
+		_update_shadows()
 
 
 func _configure_server() -> void:

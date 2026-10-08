@@ -50,12 +50,13 @@ echo "note: keep both windows at least partly visible; a fully hidden window get
 # Windows are staggered and shrunk so neither fully covers the other (an occluded window
 # can be put to sleep by macOS and its connection then crawls). A starts last and ends frontmost.
 B_PID=""
+A_RES=1280x800; [ "$TWO" = 1 ] && A_RES=1152x720
 if [ "$TWO" = 1 ]; then
-	"$GODOT" --path . --position 480,300 --resolution 1024x640 -- --join 127.0.0.1 --port "$PORT" --name PlayerB --identity "$DEMO/identity-B.cfg" > "$DEMO/client-B.log" 2>&1 &
+	"$GODOT" --path . --position 520,320 --resolution 1152x720 -- --join 127.0.0.1 --port "$PORT" --name PlayerB --identity "$DEMO/identity-B.cfg" > "$DEMO/client-B.log" 2>&1 &
 	B_PID=$!
 	sleep 2
 fi
-"$GODOT" --path . --position 40,60 --resolution 1024x640 -- --join 127.0.0.1 --port "$PORT" --name PlayerA --identity "$DEMO/identity-A.cfg" > "$DEMO/client-A.log" 2>&1 &
+"$GODOT" --path . --position 40,60 --resolution "$A_RES" -- --join 127.0.0.1 --port "$PORT" --name PlayerA --identity "$DEMO/identity-A.cfg" > "$DEMO/client-A.log" 2>&1 &
 A_PID=$!
 wait "$A_PID" 2>/dev/null
 [ -n "$B_PID" ] && wait "$B_PID" 2>/dev/null

@@ -9,6 +9,11 @@ extends Node
 ##   wait <frames>
 ##   focus <x> <y>              camera.focus_tile (dev shortcut)
 ##   zoom <ortho_size>          camera.set_ortho_size (dev shortcut)
+##   pitch <deg>                camera.set_pitch (dev shortcut; the clamp applies)
+##   yaw <deg>                  camera.set_yaw (dev shortcut)
+##   view <ortho|persp>         camera.set_perspective_mode (dev shortcut)
+##   rdrag <dx> <dy>            right-button drag from the pointer by dx,dy px over DRAG_STEPS frames (tilt)
+##   mdrag <dx> <dy>            middle-button drag likewise (orbit)
 ##   tool <name>                click the toolbar button: claim zone_r zone_c zone_i zone_clear road power demolish
 ##   hover <x> <y>              move the pointer over tile x,y
 ##   click <x> <y>              left click on tile x,y
@@ -19,11 +24,13 @@ extends Node
 ##   edge <left|right|up|down> <frames>   park the pointer in the edge-pan margin for frames
 ##   wheel <steps>              wheel up (steps > 0) or down at the pointer
 ##   print <text>
-##   dump                       print camera target, ortho size, tracked pointer, visible rect, tool
+##   dump                       print camera target, size, pitch, yaw, projection, depth range, pointer, rect, tool
 ##   guide                      print the opening guide's progress, the alert feed and the hover line
 ## Lines starting with # are comments.
 
 const TOOL_TRIES := 3
+## Motion events a scripted button drag is spread over.
+const DRAG_STEPS := 5
 
 var camera: CameraRig
 var toolbar: Toolbar
@@ -95,6 +102,16 @@ func _run(line: String) -> void:
 			camera.focus_tile(int(parts[1]), int(parts[2]))
 		"zoom":
 			camera.set_ortho_size(float(parts[1]))
+		"pitch":
+			camera.set_pitch(float(parts[1]))
+		"yaw":
+			camera.set_yaw(float(parts[1]))
+		"view":
+			camera.set_perspective_mode(parts[1] == "persp")
+		"rdrag":
+			_drag_button(MOUSE_BUTTON_RIGHT, Vector2(float(parts[1]), float(parts[2])))
+		"mdrag":
+			_drag_button(MOUSE_BUTTON_MIDDLE, Vector2(float(parts[1]), float(parts[2])))
 		"tool":
 			var tool := Toolbar.tool_from_name(parts[1])
 			var button := toolbar.button_for(tool)
@@ -158,8 +175,10 @@ func _run(line: String) -> void:
 		"print":
 			print("INPUT_SCRIPT " + " ".join(parts.slice(1)))
 		"dump":
-			print("INPUT_SCRIPT dump target=%s size=%.2f pointer=%s rect=%s inside=%s tool=%s" % [
-				camera.target, camera.size, camera.pointer(), get_viewport().get_visible_rect(),
+			print("INPUT_SCRIPT dump target=%s size=%.2f pitch=%.2f yaw=%.2f proj=%s near=%.2f far=%.1f pointer=%s rect=%s window=%s inside=%s tool=%s" % [
+				camera.target, camera.size, camera.pitch_deg, camera.yaw_deg,
+				"persp" if camera.perspective else "ortho", camera.near, camera.far,
+				camera.pointer(), get_viewport().get_visible_rect(), DisplayServer.window_get_size(),
 				camera.mouse_inside, Toolbar.TOOL_NAMES[toolbar.tool]
 			])
 		"guide":
@@ -211,6 +230,18 @@ func _select_tool(tool: int, button: Button, tries: int) -> void:
 		print("INPUT_SCRIPT retry tool %s" % Toolbar.TOOL_NAMES[tool])
 		_select_tool(tool, button, tries - 1)
 	)
+
+
+## Press a button at the pointer, move by `delta` in DRAG_STEPS motion events (one per frame),
+## release where the pointer ends. The camera's drag threshold and PlayInput's click rule see
+## exactly what a real drag produces.
+func _drag_button(index: MouseButton, delta: Vector2) -> void:
+	var from := _pointer
+	_button(index, true)
+	for i in DRAG_STEPS:
+		var at := from + delta * float(i + 1) / float(DRAG_STEPS)
+		_queue.append(func() -> void: _move(at))
+	_queue.append(func() -> void: _button(index, false))
 
 
 func _move(to: Vector2) -> void:

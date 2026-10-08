@@ -1,0 +1,29 @@
+# Picking, casting and the right-click rule in the perspective street view on a live server
+# (faction A, the first player to join). After WELCOME: 150 m view on tile 6,3 (so the lot is
+# on screen), perspective, 30° pitch, 20° yaw. Claim and zone the lot east of the spawn by
+# clicking it (tile_to_screen -> pick_tile,
+# both through the perspective projection), a right click clears the tool, then hover the lot
+# and print the guide line: expect progress=2/4, tool=none and hover "tile 8,3 · owner A · zone R".
+# Pointer positions come from tile_to_screen, so the window must be the design scale (1280 wide).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . --resolution 1280x800 -- --join 127.0.0.1 --port 24690 --name CamA --identity <tmp>/identity.cfg \
+#     --input-script client/dev/scripts/camera_persp_cast.txt --screenshot <tmp>/camera_persp_cast.png --screenshot-frames 300
+wait 150
+focus 6 3
+zoom 150
+view persp
+pitch 30
+yaw 20
+tool claim
+click 8 3
+wait 10
+tool zone_r
+click 8 3
+wait 10
+rclick
+wait 5
+hover 8 3
+wait 30
+guide
+dump
+wait 10
