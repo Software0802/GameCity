@@ -20,10 +20,16 @@ extends Node
 ##   wheel <steps>              wheel up (steps > 0) or down at the pointer
 ##   print <text>
 ##   dump                       print camera target, ortho size, tracked pointer, visible rect, tool
+##   guide                      print the opening guide's progress, the alert feed and the hover line
 ## Lines starting with # are comments.
+
+const TOOL_TRIES := 3
 
 var camera: CameraRig
 var toolbar: Toolbar
+## Optional; the `guide` op reads them.
+var hud: Hud = null
+var session: ClientSession = null
 var finished: bool = false
 
 var _lines: PackedStringArray = []
@@ -33,9 +39,11 @@ var _pointer: Vector2 = Vector2(640, 360)
 var _queue: Array[Callable] = []
 
 
-func setup(p_camera: CameraRig, p_toolbar: Toolbar) -> void:
+func setup(p_camera: CameraRig, p_toolbar: Toolbar, p_hud: Hud = null, p_session: ClientSession = null) -> void:
 	camera = p_camera
 	toolbar = p_toolbar
+	hud = p_hud
+	session = p_session
 
 
 ## Camera panning is gated on window focus, which an unattended run cannot obtain on
@@ -93,9 +101,7 @@ func _run(line: String) -> void:
 			if button == null:
 				push_error("input script: unknown tool %s" % parts[1])
 				return
-			_move(button.get_global_rect().get_center())
-			_queue.append(func() -> void: _button(MOUSE_BUTTON_LEFT, true))
-			_queue.append(func() -> void: _button(MOUSE_BUTTON_LEFT, false))
+			_select_tool(tool, button, TOOL_TRIES)
 		"hover":
 			_move(camera.tile_to_screen(Vector2i(int(parts[1]), int(parts[2]))))
 		"click":
@@ -156,8 +162,55 @@ func _run(line: String) -> void:
 				camera.target, camera.size, camera.pointer(), get_viewport().get_visible_rect(),
 				camera.mouse_inside, Toolbar.TOOL_NAMES[toolbar.tool]
 			])
+		"guide":
+			_print_guide()
 		_:
 			push_error("input script: unknown op %s" % op)
+
+
+## Machine-readable guide state for scripted runs (grep "INPUT_SCRIPT guide"). The guide is
+## re-evaluated first so the line reflects the events applied up to this frame.
+func _print_guide() -> void:
+	var progress := -1
+	var shown := false
+	var complete := false
+	if hud != null and hud.guide != null:
+		if session != null:
+			hud.guide.refresh(session, Time.get_ticks_msec())
+		progress = hud.guide.progress
+		shown = hud.guide.is_visible()
+		complete = hud.guide.is_complete()
+	var alerts: Array[String] = []
+	if session != null:
+		for alert in session.alerts:
+			alerts.append(str(alert["text"]))
+	var hover := ""
+	if hud != null:
+		hover = hud.hover_text()
+	print("INPUT_SCRIPT guide progress=%d/%d shown=%s complete=%s alerts=%s hover=\"%s\"" % [
+		progress, StartGuide.STEP_COUNT, shown, complete, JSON.stringify(alerts), hover
+	])
+	if hud != null:
+		print("INPUT_SCRIPT " + hud.guide_panel_info())
+
+
+## Clicks the toolbar button over three frames, then checks that the tool took. A real
+## pointer event from the OS (the cursor sitting over the window as it opens) can land
+## between the synthetic press and release and cancel the button, so a missed selection
+## is retried up to TOOL_TRIES times rather than silently running the script without a tool.
+func _select_tool(tool: int, button: Button, tries: int) -> void:
+	_move(button.get_global_rect().get_center())
+	_queue.append(func() -> void: _button(MOUSE_BUTTON_LEFT, true))
+	_queue.append(func() -> void: _button(MOUSE_BUTTON_LEFT, false))
+	_queue.append(func() -> void:
+		if toolbar.tool == tool:
+			return
+		if tries <= 1:
+			push_error("input script: tool %s did not take" % Toolbar.TOOL_NAMES[tool])
+			return
+		print("INPUT_SCRIPT retry tool %s" % Toolbar.TOOL_NAMES[tool])
+		_select_tool(tool, button, tries - 1)
+	)
 
 
 func _move(to: Vector2) -> void:

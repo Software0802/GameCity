@@ -1,0 +1,26 @@
+# Opening experience on a real dedicated server (faction A, the first player to join), seen
+# from the opening view: no focus / zoom lines, the camera stays where WELCOME put it.
+# Claims and zones one lot east of the spawn (guide steps 1 and 2, road hint), a rejected
+# claim on an own tile and one far away, then hovers the lot for the status line.
+# Pointer input needs the project's 1280x720 window (synthetic events are in viewport space).
+#   godot --headless --path . res://server/main.tscn -- --port 24690 --pace 0.05 --save-dir <tmp>/save --status-file <tmp>/status.json
+#   godot --path . -- --join 127.0.0.1 --port 24690 --name LiveA --identity <tmp>/identity.cfg --settings <tmp>/settings.cfg \
+#     --input-script client/dev/scripts/live_onboarding.txt \
+#     --screenshot client/dev/screenshots/live_onboarding.png --screenshot-frames 300
+wait 150
+tool claim
+click 8 3
+wait 10
+tool zone_r
+click 8 3
+wait 10
+tool claim
+click 3 3
+wait 10
+click 10 5
+wait 10
+rclick
+hover 8 3
+wait 30
+guide
+wait 10

@@ -10,6 +10,8 @@ extends Node3D
 ##   --join <host> --port <p>     server (default 127.0.0.1:24567)
 ##   --name <n>                   display name; default: identity file, else player-xxxx
 ##   --identity <path>            identity file (default user://identity.cfg; --stub uses user://identity_stub.cfg)
+##   --settings <path>            settings file (default: beside the identity file, see ClientSettings;
+##                                --stub starts from a fresh file so the opening guide always shows)
 ##   --stub                       no network: client/dev/stub_server.gd feeds the session
 ##   --screenshot <path>          save the viewport N frames after MatchStart, then quit
 ##   --screenshot-frames <n>      N above (default 150)
@@ -18,6 +20,11 @@ extends Node3D
 
 const SCREENSHOT_FRAMES_DEFAULT := 150
 const STUB_IDENTITY_PATH := "user://identity_stub.cfg"
+## Ortho size after WELCOME, first connection and reconnects alike: 12 tiles (360 m), the
+## same convention as CameraRig.SIZE_DEFAULT (40 tiles). The 8-tile spawn block then
+## fills about 60% of the screen height with its lots and streets readable and neutral
+## land around it to claim.
+const START_VIEW_SIZE := 12.0 * CameraRig.TILE
 
 @onready var camera: CameraRig = $Camera
 @onready var world: WorldView = $World
@@ -29,6 +36,8 @@ const STUB_IDENTITY_PATH := "user://identity_stub.cfg"
 
 var session: ClientSession
 var identity: ClientIdentity
+var settings: ClientSettings
+var guide: StartGuide
 var stub: StubServer = null
 var input_script: InputScript = null
 
@@ -39,7 +48,8 @@ var _screenshot_seconds := -1.0
 var _frames_since_start := -1
 var _seconds_since_start := 0.0
 var _screenshot_taken := false
-var _focused_once := false
+## Faction whose spawn block the camera was last sent to.
+var _focused_faction: int = SliceConstants.Owner.NEUTRAL
 var _camera_block := Vector2i(-1, -1)
 var _camera_block_sent := Vector2i(-1, -1)
 var _was_started := false
@@ -57,18 +67,28 @@ func _ready() -> void:
 	identity.load()
 	identity.ensure_name(LaunchArgs.value("--name", ""))
 	identity.save()
+	var settings_path := LaunchArgs.value("--settings", ClientSettings.path_for_identity(identity_path))
+	settings = ClientSettings.new(settings_path)
+	if stub_mode and not LaunchArgs.has("--settings"):
+		settings.clear()
+	settings.load()
+	guide = StartGuide.new()
+	guide.setup(settings)
 
 	world.bind(session)
 	hud.bind(session)
+	hud.guide = guide
 	play_input.setup(session, camera, toolbar, world)
 	toolbar.tax_rate_committed.connect(_on_tax_rate_committed)
 	session.updated.connect(_on_session_updated)
+	session.welcomed.connect(_on_welcomed)
 	camera.block_changed.connect(_on_camera_block_changed)
 	play_input.hover_changed.connect(_on_hover_changed)
 	connection.state_changed.connect(func(_state: int) -> void: _refresh_connection_text())
 
-	var spawn := WorldState.spawn_block(SliceConstants.Owner.FACTION_A)
-	camera.focus_block(spawn.block_x, spawn.block_y)
+	# Before WELCOME the faction is unknown: frame A's spawn at the opening zoom so the
+	# first frame already has the opening view; WELCOME moves it when the faction is B.
+	_focus_start_view(SliceConstants.Owner.FACTION_A)
 
 	_screenshot_path = LaunchArgs.value("--screenshot", "")
 	_screenshot_frames = LaunchArgs.int_value("--screenshot-frames", SCREENSHOT_FRAMES_DEFAULT)
@@ -79,7 +99,7 @@ func _ready() -> void:
 	if not script_path.is_empty():
 		input_script = InputScript.new()
 		input_script.name = "InputScript"
-		input_script.setup(camera, toolbar)
+		input_script.setup(camera, toolbar, hud, session)
 		input_script.load_file(script_path)
 		add_child(input_script)
 
@@ -124,11 +144,23 @@ func _on_session_updated() -> void:
 		_frames_since_start = 0
 		_camera_block_sent = Vector2i(-1, -1)
 	_was_started = session.match_started
-	if session.faction != SliceConstants.Owner.NEUTRAL and not _focused_once:
-		_focused_once = true
-		var spawn := WorldState.spawn_block(session.faction)
-		camera.focus_block(spawn.block_x, spawn.block_y)
+	# Pre-handshake host: the faction arrives through faction_assigned without a WELCOME.
+	if session.faction != SliceConstants.Owner.NEUTRAL and session.faction != _focused_faction:
+		_focus_start_view(session.faction)
 	_push_camera_block()
+
+
+## Every WELCOME, the first one and each reconnect, returns the camera to the faction's
+## spawn block at the opening zoom.
+func _on_welcomed(welcome: ServerWelcome) -> void:
+	_focus_start_view(welcome.faction)
+
+
+func _focus_start_view(faction: int) -> void:
+	_focused_faction = faction
+	var spawn := WorldState.spawn_block(faction)
+	camera.focus_block(spawn.block_x, spawn.block_y)
+	camera.set_ortho_size(START_VIEW_SIZE)
 
 
 func _on_camera_block_changed(block_x: int, block_y: int) -> void:
@@ -155,14 +187,11 @@ func _on_tax_rate_committed(rate: float) -> void:
 	session.send_command(GameCommand.set_tax_rate(rate))
 
 
+## The HUD formats the hovered tile itself (Hud.hover_text) so the line follows later
+## changes of that tile, not only pointer moves.
 func _on_hover_changed(cell: Vector2i) -> void:
-	if cell == CameraRig.NO_TILE:
-		hud.hover_text = ""
-	else:
-		var view := session.view_tile(cell.x, cell.y)
-		hud.hover_text = "tile %d,%d  %s %s" % [
-			cell.x, cell.y, ClientSession.faction_name(view.owner), ClientSession.zone_name(view.zone)
-		]
+	hud.hover_cell = cell
+	hud.refresh()
 
 
 func _refresh_connection_text() -> void:

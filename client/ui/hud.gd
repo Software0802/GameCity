@@ -5,7 +5,10 @@ extends Control
 ## secondary #8B939C, faction A positive, faction B negative, warn #F0C93A.
 ## Shows treasury, income per second, population, jobs, tax rate (FactionState),
 ## time remaining (ScoreTick.seconds_remaining as d h m s), both totals, the last
-## five alerts with their time, the crisis banner, and the connection line.
+## five alerts with their time, the crisis banner, the connection line with the
+## hovered tile's owner / zone / tier / road / power / satisfaction, and the opening
+## guide (StartGuide: four steps with live ticks, a close button, and the completion
+## line) under the alerts in the right column.
 
 const FONT_BODY := 18
 const FONT_SMALL := 15
@@ -15,11 +18,15 @@ const MARGIN := 12.0
 const ALERTS_WIDTH := 380.0
 const ALERTS_TOP := 96.0
 const BANNER_TOP := 88.0
+const GUIDE_WIDTH := 380.0
 
 var session: ClientSession = null
+## Set by the owner; the panel draws it and its close button dismisses it.
+var guide: StartGuide = null
 var connection_text: String = ""
 var connection_warn: bool = false
-var hover_text: String = ""
+## Tile under the pointer, CameraRig.NO_TILE for none; formatted by hover_text().
+var hover_cell: Vector2i = CameraRig.NO_TILE
 
 var _funds: Label
 var _income: Label
@@ -37,6 +44,10 @@ var _banner_label: Label
 var _status: Label
 var _overlay: PanelContainer
 var _overlay_label: Label
+var _guide_panel: PanelContainer
+var _guide_close: Button
+var _guide_lines: Array[Label] = []
+var _guide_footer: Label
 var _refresh_left := 0.0
 
 
@@ -49,6 +60,7 @@ func _ready() -> void:
 	_build_banner()
 	_build_status()
 	_build_overlay()
+	_build_guide()
 	resized.connect(_layout)
 	get_viewport().size_changed.connect(_layout)
 	_layout.call_deferred()
@@ -61,10 +73,14 @@ func bind(p_session: ClientSession) -> void:
 	refresh()
 
 
+## The guide scans the mirror's tiles and edges, so it is re-evaluated on this timer
+## only, not on every session update (a block snapshot is 64 updates in one frame).
 func _process(delta: float) -> void:
 	_refresh_left -= delta
 	if _refresh_left <= 0.0:
 		_refresh_left = REFRESH_SEC
+		if guide != null and session != null:
+			guide.refresh(session, Time.get_ticks_msec())
 		refresh()
 
 
@@ -94,6 +110,31 @@ func refresh() -> void:
 	_refresh_banner()
 	_refresh_status()
 	_refresh_overlay()
+	_refresh_guide()
+	# Content-sized panels only grow on their own; shrink them back when a wrapped line
+	# left (resized -> _layout keeps the column below them in place).
+	_alerts_panel.reset_size()
+	_guide_panel.reset_size()
+
+
+## Status-line words for the hovered tile (the optimistic view): owner, zone, tier,
+## road (an edge touches it), power, satisfaction. Empty when nothing is hovered.
+func hover_text() -> String:
+	if session == null or hover_cell == CameraRig.NO_TILE:
+		return ""
+	var view := session.view_tile(hover_cell.x, hover_cell.y)
+	var tier := "no building"
+	if view.has_building:
+		tier = "tier %d" % view.building_tier
+	var power := "power no"
+	if view.power_covered:
+		power = "power brownout" if view.brownout else "power yes"
+	var road := "road yes" if session.has_road(hover_cell.x, hover_cell.y) else "road no"
+	return "tile %d,%d · owner %s · zone %s · %s · %s · %s · sat %d%%" % [
+		hover_cell.x, hover_cell.y,
+		ClientSession.faction_name(view.owner), ClientSession.zone_name(view.zone),
+		tier, road, power, roundi(view.satisfaction * 100.0),
+	]
 
 
 ## d h m s, as in "6d 23h 59m 30s".
@@ -199,8 +240,9 @@ func _refresh_status() -> void:
 			parts.append(session.welcome.name)
 		if session.pending_count() > 0:
 			parts.append("pending %d" % session.pending_count())
-	if not hover_text.is_empty():
-		parts.append(hover_text)
+	var hover := hover_text()
+	if not hover.is_empty():
+		parts.append(hover)
 	_status.text = "  ·  ".join(parts)
 	_status.add_theme_color_override("font_color", Palette.WARN if connection_warn else Palette.HUD_TEXT_2)
 
@@ -219,6 +261,46 @@ func _refresh_overlay() -> void:
 	_overlay.visible = not text.is_empty()
 	_overlay_label.text = text
 	_overlay_label.add_theme_color_override("font_color", Palette.WARN if connection_warn else Palette.HUD_TEXT)
+
+
+## Shown while the round runs and the guide is neither closed nor expired. Done steps
+## are positive, the current step primary, the rest secondary; the completion line
+## appears with the fourth tick and the guide saves itself as dismissed 10 s later.
+func _refresh_guide() -> void:
+	var shown := guide != null and guide.is_visible() and session != null and session.can_act()
+	_guide_panel.visible = shown
+	if not shown:
+		return
+	for i in _guide_lines.size():
+		var line := _guide_lines[i]
+		var done := guide.step_done(i)
+		line.text = "%s %d  %s" % ["[x]" if done else "[ ]", i + 1, StartGuide.STEPS[i]]
+		var color := Palette.HUD_TEXT_2
+		if done:
+			color = Palette.HUD_POSITIVE
+		elif i == guide.progress:
+			color = Palette.HUD_TEXT
+		line.add_theme_color_override("font_color", color)
+	# Text only while shown: a hidden autowrap label keeps a 1 px width and would report
+	# its wrapped height one character per line, stretching the panel off screen.
+	_guide_footer.visible = guide.is_complete()
+	_guide_footer.text = StartGuide.DONE_TEXT if guide.is_complete() else ""
+
+
+## Layout of the guide panel for scripted runs: position, size, and each line's size.
+func guide_panel_info() -> String:
+	var lines: Array[String] = []
+	for line in _guide_lines:
+		lines.append("%s/%s" % [line.size, line.get_minimum_size()])
+	return "guide_panel pos=%s size=%s visible=%s lines=%s footer=%s" % [
+		_guide_panel.position, _guide_panel.size, _guide_panel.visible, " ".join(lines), _guide_footer.size
+	]
+
+
+func _on_guide_close() -> void:
+	if guide != null:
+		guide.dismiss()
+	refresh()
 
 
 func _build_stats() -> void:
@@ -293,6 +375,9 @@ func _build_alerts() -> void:
 	column.add_child(title)
 	for i in ClientSession.MAX_ALERTS:
 		var line := Label.new()
+		# The inner width as minimum: an autowrap label laid out before its width is known
+		# wraps at 1 px and reports one character per line, inflating the panel for good.
+		line.custom_minimum_size = Vector2(ALERTS_WIDTH - 20.0, 0.0)
 		line.add_theme_font_size_override("font_size", FONT_SMALL)
 		line.add_theme_color_override("font_color", Palette.WARN)
 		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -317,6 +402,65 @@ func _build_banner() -> void:
 	_banner.resized.connect(_layout)
 
 
+func _build_guide() -> void:
+	_guide_panel = PanelContainer.new()
+	_guide_panel.name = "Guide"
+	_guide_panel.custom_minimum_size = Vector2(GUIDE_WIDTH, 0)
+	_guide_panel.add_theme_stylebox_override("panel", Palette.panel_style(Palette.with_alpha(Palette.HUD_BG, 0.88), 6, 10))
+	# Pass-through like every other HUD panel: the land under it stays clickable and hoverable;
+	# only the close button takes the mouse.
+	_guide_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_guide_panel.visible = false
+	add_child(_guide_panel)
+	var column := VBoxContainer.new()
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override("separation", 4)
+	_guide_panel.add_child(column)
+	var head := HBoxContainer.new()
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(head)
+	var title := Label.new()
+	title.text = StartGuide.TITLE
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", FONT_SMALL)
+	title.add_theme_color_override("font_color", Palette.HUD_TEXT_2)
+	head.add_child(title)
+	_guide_close = Button.new()
+	_guide_close.name = "Close"
+	_guide_close.text = "x"
+	_guide_close.tooltip_text = "Close the guide"
+	_guide_close.focus_mode = Control.FOCUS_NONE
+	_guide_close.add_theme_font_size_override("font_size", FONT_SMALL)
+	_guide_close.add_theme_color_override("font_color", Palette.HUD_TEXT_2)
+	_guide_close.add_theme_color_override("font_hover_color", Palette.HUD_TEXT)
+	_guide_close.add_theme_color_override("font_pressed_color", Palette.HUD_TEXT)
+	_guide_close.add_theme_stylebox_override("normal", Palette.panel_style(Palette.with_alpha(Palette.HUD_TEXT_2, 0.12), 4, 4))
+	_guide_close.add_theme_stylebox_override("hover", Palette.panel_style(Palette.with_alpha(Palette.HUD_TEXT_2, 0.24), 4, 4))
+	_guide_close.add_theme_stylebox_override("pressed", Palette.panel_style(Palette.with_alpha(Palette.HUD_TEXT_2, 0.24), 4, 4))
+	_guide_close.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_guide_close.pressed.connect(_on_guide_close)
+	head.add_child(_guide_close)
+	# Autowrap labels get the panel's inner width as their minimum so the wrap width is
+	# known before the first layout (otherwise they wrap at 1 px and inflate the panel).
+	var inner := Vector2(GUIDE_WIDTH - 20.0, 0.0)
+	for i in StartGuide.STEP_COUNT:
+		var line := Label.new()
+		line.custom_minimum_size = inner
+		line.add_theme_font_size_override("font_size", FONT_SMALL)
+		line.add_theme_color_override("font_color", Palette.HUD_TEXT_2)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		column.add_child(line)
+		_guide_lines.append(line)
+	_guide_footer = Label.new()
+	_guide_footer.custom_minimum_size = inner
+	_guide_footer.add_theme_font_size_override("font_size", FONT_SMALL)
+	_guide_footer.add_theme_color_override("font_color", Palette.HUD_POSITIVE)
+	_guide_footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_guide_footer.visible = false
+	column.add_child(_guide_footer)
+	_guide_panel.resized.connect(_layout)
+
+
 func _build_status() -> void:
 	_status_panel = _panel(Vector2.ZERO)
 	_status_panel.name = "Status"
@@ -338,6 +482,9 @@ func _layout() -> void:
 		return
 	_clock_panel.position = Vector2(area.x - MARGIN - _clock_panel.size.x, MARGIN)
 	_alerts_panel.position = Vector2(area.x - MARGIN - _alerts_panel.size.x, ALERTS_TOP)
+	_guide_panel.position = Vector2(
+		area.x - MARGIN - _guide_panel.size.x, _alerts_panel.position.y + _alerts_panel.size.y + MARGIN
+	)
 	_banner.position = Vector2((area.x - _banner.size.x) * 0.5, BANNER_TOP)
 	_status_panel.position = Vector2(MARGIN, area.y - MARGIN - _status_panel.size.y)
 
