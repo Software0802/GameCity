@@ -2,14 +2,23 @@ extends RefCounted
 
 ## Satisfaction and tier growth for every zoned building, one pass per tick.
 ##
-## satisfaction = has_road × powered × demand gate × (1 − congestion) × (1 − pollution)
-##                × tax penalty
+## satisfaction = has_road × powered × demand gate × congestion factor
+##                × pollution factor × tax penalty
 ##   has_road, powered  0 or 1 (powered = power_covered and not brownout)
 ##   demand gate        1 when the faction's demand for this zone is > 0, else
 ##                      DEMAND_GATE_CLOSED
-##   congestion         mean quantized congestion of the tile's incident edges
-##   pollution          the pollution field value, 0–1
+##   congestion factor  1 − max(0, (c − CONGESTION_KNEE) / (1 − CONGESTION_KNEE)) with
+##                      c the mean raw congestion of the tile's incident edges: no
+##                      penalty up to the knee (half of CONGESTION_CAPACITY), linear
+##                      to 0 at full load. An ordinary street (a few units of load
+##                      per edge) is free; a tier-2 corridor or a fully roaded grid
+##                      pays.
+##   pollution factor   1 − pollution × POLLUTION_WEIGHT[zone]: residential takes the
+##                      field in full, commercial half, industry ignores it (a
+##                      factory is not kept small by its own smoke)
 ##   tax penalty        1 − tax_rate (linear: 0.9 at the default rate, 0.7 at the cap)
+## The knee and the zone weights are formula shapes like the ½ spillover in the
+## road load, not tunable rule numbers; SliceConstants holds the latter.
 ##
 ## A tile at or above SAT_UP accumulates sim seconds toward TIER_UP_SECONDS and
 ## then rises one tier; at or below SAT_DOWN it accumulates toward TIER_DOWN_SECONDS
@@ -23,6 +32,10 @@ extends RefCounted
 
 ## Float slack on the SAT_UP / SAT_DOWN comparisons.
 const EPS := 1e-6
+## Raw congestion below which the factor is 1.
+const CONGESTION_KNEE := 0.5
+## Share of the pollution field a zone feels, indexed by SliceConstants.Zone.
+const POLLUTION_WEIGHT: Array[float] = [0.0, 1.0, 0.5, 0.0]
 
 var _timer: PackedFloat32Array = PackedFloat32Array()
 var _sat_raw: PackedFloat32Array = PackedFloat32Array()
@@ -47,13 +60,24 @@ static func tax_penalty(tax_rate: float) -> float:
 	return 1.0 - tax_rate
 
 
+## Satisfaction factor for a mean raw congestion c in 0–1.
+static func congestion_factor(c: float) -> float:
+	return 1.0 - clampf((c - CONGESTION_KNEE) / (1.0 - CONGESTION_KNEE), 0.0, 1.0)
+
+
+## Satisfaction factor for a pollution field value in 0–1 on a tile of this zone.
+static func pollution_factor(pollution: float, zone: int) -> float:
+	return 1.0 - clampf(pollution, 0.0, 1.0) * POLLUTION_WEIGHT[zone]
+
+
 ## Sim seconds one tick advances at this pace.
 static func sim_seconds_per_tick(pace: float) -> float:
 	return SliceConstants.SIM_TICK_SEC / pace
 
 
 ## One pass over the active tiles. gates[faction] is a PackedFloat32Array indexed by
-## zone; penalties[faction] is the tax penalty. Returns
+## zone; penalties[faction] is the tax penalty; tile_congestion is the raw mean per
+## tile. Returns
 ## {"sat_changed": PackedInt32Array of tiles whose quantized satisfaction moved,
 ##  "tier_changes": [[id, new_tier], ...]}.
 func run(
@@ -81,12 +105,15 @@ func run(
 	var tier_max := SliceConstants.BUILDING_TIER_MAX
 	var tier_min := SliceConstants.BUILDING_TIER_MIN
 	var steps := float(SliceConstants.FIELD_QUANT)
+	var knee := CONGESTION_KNEE
+	var inv_span := 1.0 / (1.0 - CONGESTION_KNEE)
 	for id in active:
 		var faction := owner[id]
 		var sat := 0.0
 		if faction >= 0 and degree[id] > 0 and cover[id] > 0 and dark[id] == 0:
-			var pollution := minf(1.0, float(mass[id]) * inv_mass)
-			sat = gates[faction][zone[id]] * (1.0 - tile_congestion[id]) * (1.0 - pollution) * penalties[faction]
+			var congestion := 1.0 - clampf((tile_congestion[id] - knee) * inv_span, 0.0, 1.0)
+			var pollution := 1.0 - minf(1.0, float(mass[id]) * inv_mass) * POLLUTION_WEIGHT[zone[id]]
+			sat = gates[faction][zone[id]] * congestion * pollution * penalties[faction]
 		_sat_raw[id] = sat
 		var snapped := floorf(sat * steps + 0.5) / steps
 		if snapped != _sat_q[id]:

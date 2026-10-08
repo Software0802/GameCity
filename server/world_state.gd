@@ -9,12 +9,18 @@ extends RefCounted
 ##
 ## The rules live in server/sim/ and this file orchestrates them:
 ##   SimEconomy     treasury, tax rate, counters, income, demand
-##   PowerGrid      coverage, per-plant load, brownout
+##   PowerGrid      coverage, per-plant load shared between overlapping plants, brownout
 ##   PollutionField incremental pollution field
 ##   RoadNetwork    edges, road access, congestion
 ##   GrowthModel    satisfaction and tier timers
 ## Per-tile scalars are mirrored in packed arrays so a tick never scans TileDelta
 ## objects; only tiles whose wire fields changed are touched and sent, once each.
+##
+## A building counts toward its faction's population or jobs (and so the demand
+## triangle, FactionState, RegionSummary, and the score) only while it is served:
+## it has a road and actual power (power_covered and not brownout). _served mirrors
+## that per tile and is refreshed wherever a road, coverage, brownout, or the
+## building itself changes, so the ledgers never need a scan.
 ##
 ## Spawn blocks are an example placement derived from SliceConstants.MAP_SIZE:
 ## faction A owns [0,SPAWN_SIZE)², faction B the mirrored corner. A fresh WorldState
@@ -61,6 +67,8 @@ var _growth: GrowthModel = null
 var _owner_arr: PackedInt32Array = PackedInt32Array()
 var _zone_arr: PackedInt32Array = PackedInt32Array()
 var _tier_arr: PackedInt32Array = PackedInt32Array()
+## 1 while the tile's building is counted in its faction's ledger (road and power).
+var _served: PackedByteArray = PackedByteArray()
 ## Zoned tiles with a building: the only tiles growth visits.
 var _active: Dictionary = {}
 var _active_list: PackedInt32Array = PackedInt32Array()
@@ -131,12 +139,19 @@ func tax_rate(faction: int) -> float:
 	return _economy.ledger(faction).tax_rate
 
 
+## Σ TIER_POP over the faction's served residential tiles (road and actual power).
 func population(faction: int) -> int:
 	return _economy.ledger(faction).population
 
 
+## Σ TIER_JOBS over the faction's served commercial and industrial tiles.
 func jobs(faction: int) -> int:
 	return _economy.ledger(faction).jobs()
+
+
+## True while the building on (x, y) counts toward population or jobs.
+func is_served(x: int, y: int) -> bool:
+	return _served[SliceConstants.tile_id(x, y)] != 0
 
 
 func owned_count(faction: int) -> int:
@@ -163,9 +178,20 @@ func tier_timer(x: int, y: int) -> float:
 	return _growth.timer(SliceConstants.tile_id(x, y))
 
 
-## Σ (tier + 1) over building tiles inside the plant's radius; 0 without a plant.
-func plant_load(x: int, y: int) -> int:
+## Σ (tier + 1) / covering plants over the building tiles inside the plant's
+## square; 0 without a plant. Whole while no other plant overlaps the square.
+func plant_load(x: int, y: int) -> float:
 	return _grid.plant_load(SliceConstants.tile_id(x, y))
+
+
+## Mean raw congestion of the tile's incident edges (what satisfaction reads).
+func tile_congestion_raw(x: int, y: int) -> float:
+	return _roads.tile_congestion(SliceConstants.tile_id(x, y))
+
+
+## Raw (unquantized) congestion of one edge; 0 when there is no such edge.
+func edge_congestion_raw(a: Vector2i, b: Vector2i) -> float:
+	return _roads.raw_congestion(a, b)
 
 
 ## Current per-plant capacity (halved during the grid storm).
@@ -261,7 +287,8 @@ func seed_plan(faction: int, plan: StarterCity.Plan) -> bool:
 			push_error("WorldState.seed_plan: lot %s has no zone" % cell)
 			return false
 	for edge in plan.edges:
-		_roads.add(edge[0], edge[1])
+		if _roads.add(edge[0], edge[1]) != null:
+			_road_changed(edge[0], edge[1])
 	var turned_on := _grid.add_plant(plant.id, faction)
 	_economy.add_plant(faction, 1)
 	for lot in plan.lots:
@@ -348,8 +375,9 @@ func score(seconds_remaining: int) -> ScoreTick:
 ##   "factions": [{"faction": int, "treasury": float, "tax_rate": float}],  faction order
 ##   "tier_timers": [[id, toward_up_seconds, toward_down_seconds]],  non-zero only, ascending id
 ## }
-## Counters, coverage, loads, pollution, and road access are derived from the tiles,
-## edges, and plants on load.
+## Counters, coverage, loads, pollution, road access, and edge congestion (capacity
+## and value) are derived from the tiles, edges, and plants on load; the saved edge
+## values are only what the save last saw.
 func to_save_dict() -> Dictionary:
 	var tiles: Array = []
 	for tile in _tiles:
@@ -415,8 +443,8 @@ func _restore(data: Dictionary) -> void:
 				push_warning("WorldState._restore: tile (%d,%d) tier %d out of range, clamped" % [tile.x, tile.y, tile.building_tier])
 				tile.building_tier = clampi(tile.building_tier, SliceConstants.BUILDING_TIER_MIN, SliceConstants.BUILDING_TIER_MAX)
 			_tiles[id] = tile
-	# Buildings before edges: set_tier() then marks nothing dirty, and the saved
-	# congestion values are trusted as they are.
+	# Buildings before edges: set_tier() then marks nothing dirty; recompute_all()
+	# below derives every edge's congestion from the restored tiers.
 	for tile in _tiles:
 		_index_restored_tile(tile)
 	var raw_edges = data.get("edges", [])
@@ -435,7 +463,7 @@ func _restore(data: Dictionary) -> void:
 				push_warning("WorldState._restore: edge %s-%s invalid, skipped" % [edge.a, edge.b])
 				continue
 			_roads.restore(edge)
-	_roads.rebuild_tile_congestion()
+	_roads.recompute_all()
 	var raw_sources = data.get("power_sources", [])
 	if raw_sources is Array:
 		for raw in raw_sources:
@@ -462,9 +490,13 @@ func _restore(data: Dictionary) -> void:
 	_economy.restore_rows(data.get("factions", []))
 	_growth.restore_timers(data.get("tier_timers", []))
 	# Derived state is now consistent with the saved tile flags; drop the bookkeeping
-	# the rebuild produced instead of turning it into events.
+	# the rebuild produced instead of turning it into events. The ledgers fill only
+	# now, after brownout is settled, so an overloaded plant in the save counts no
+	# population under it.
 	_grid.resolve()
 	_pollution.take_dirty()
+	for id in _active:
+		_refresh_served(id)
 
 
 ## Field-by-field against a fresh TileDelta.from_cell so new TileDelta fields are
@@ -582,8 +614,9 @@ func edges_in_block(block: InterestId) -> Array[EdgeDelta]:
 	return copies
 
 
-## Coarse view of one block: population (TIER_POP weighted), any residential tile
-## without actual power, the crisis flag, mean pollution, any brownout.
+## Coarse view of one block: population (TIER_POP over served residential tiles,
+## the same rule as the ledgers), any residential tile without actual power, the
+## crisis flag, mean pollution, any brownout.
 func summary_for(block: InterestId) -> RegionSummary:
 	var summary := RegionSummary.new()
 	summary.interest = InterestId.new(block.block_x, block.block_y)
@@ -600,7 +633,8 @@ func summary_for(block: InterestId) -> RegionSummary:
 			if tile.brownout:
 				brownout = true
 			if tile.zone == SliceConstants.Zone.R and tile.has_building:
-				pop += SliceConstants.TIER_POP[tile.building_tier]
+				if _served[tile.id] != 0:
+					pop += SliceConstants.TIER_POP[tile.building_tier]
 				if not _grid.powered(tile.id):
 					short_power = true
 	summary.population = pop
@@ -724,6 +758,7 @@ func _add_edge(faction: int, cmd: GameCommand) -> Dictionary:
 	if not _economy.charge(faction, float(SliceConstants.COST_EDGE), free_build):
 		return _fail(ReasonCode.Id.INSUFFICIENT_FUNDS, "cost_%d" % SliceConstants.COST_EDGE)
 	var edge := _roads.add(cmd.edge_a, cmd.edge_b)
+	_road_changed(cmd.edge_a, cmd.edge_b)
 	var dirty: Dictionary = {}
 	var alerts: Array = []
 	_settle(dirty, alerts)
@@ -741,6 +776,7 @@ func _remove_edge(faction: int, cmd: GameCommand) -> Dictionary:
 	var ordered := ordered_edge(cmd.edge_a, cmd.edge_b)
 	if not _roads.remove(ordered.a, ordered.b):
 		return _fail(ReasonCode.Id.EDGE_RULE, "missing_edge")
+	_road_changed(ordered.a, ordered.b)
 	var dirty: Dictionary = {}
 	var alerts: Array = []
 	_settle(dirty, alerts)
@@ -772,6 +808,8 @@ func _reset_runtime() -> void:
 	_zone_arr.fill(SliceConstants.Zone.NONE)
 	_tier_arr.resize(TILE_COUNT)
 	_tier_arr.fill(0)
+	_served.resize(TILE_COUNT)
+	_served.fill(0)
 	_active.clear()
 	_active_list = PackedInt32Array()
 	_active_stale = true
@@ -794,42 +832,40 @@ func _fill_spawn(origin: Vector2i, owner: int) -> void:
 			_set_owner(tile_at(origin.x + x, origin.y + y), owner)
 
 
-## Owner change with every counter that depends on it. A building moves its
-## population or jobs to the new owner (not reachable in M2, kept correct anyway).
+## Owner change with every counter that depends on it. A served building moves
+## its population or jobs to the new owner (not reachable in M2, kept correct anyway).
 func _set_owner(tile: TileDelta, owner: int) -> void:
 	var previous := tile.owner
 	if previous == owner:
 		return
 	var linear := InterestId.from_tile(tile.x, tile.y).linear_id()
-	var is_building := tile.has_building and tile.zone != SliceConstants.Zone.NONE
+	_detach_building(tile)
 	if SimEconomy.is_faction(previous):
 		_economy.add_owned(previous, -1)
 		_owned_in_block[previous][linear] -= 1
-		if is_building:
-			_economy.add_building(previous, tile.zone, tile.building_tier, -1)
 	tile.owner = owner
 	_owner_arr[tile.id] = owner
 	if SimEconomy.is_faction(owner):
 		_economy.add_owned(owner, 1)
 		_owned_in_block[owner][linear] += 1
-		if is_building:
-			_economy.add_building(owner, tile.zone, tile.building_tier, 1)
+	_refresh_served(tile.id)
 
 
-## Call before changing zone / has_building / building_tier.
+## Call before changing zone / has_building / building_tier: takes a served
+## building out of its faction's ledger.
 func _detach_building(tile: TileDelta) -> void:
-	if tile.has_building and tile.zone != SliceConstants.Zone.NONE:
+	if _served[tile.id] != 0:
+		_served[tile.id] = 0
 		_economy.add_building(tile.owner, tile.zone, tile.building_tier, -1)
 
 
-## Call after changing zone / has_building / building_tier: counters, the sim
-## modules' per-tile inputs, and the active set follow the tile's new fields.
+## Call after changing zone / has_building / building_tier: the sim modules'
+## per-tile inputs and the active set follow the tile's new fields, then the
+## ledger if the building is served.
 func _attach_building(tile: TileDelta) -> void:
 	var id := tile.id
 	var is_building := tile.has_building and tile.zone != SliceConstants.Zone.NONE
 	var tier := tile.building_tier if is_building else 0
-	if is_building:
-		_economy.add_building(tile.owner, tile.zone, tier, 1)
 	_zone_arr[id] = tile.zone
 	_tier_arr[id] = tier
 	_grid.set_weight(id, tier + 1 if is_building else 0)
@@ -845,9 +881,11 @@ func _attach_building(tile: TileDelta) -> void:
 			_active_stale = true
 		_growth.deactivate(id)
 		tile.satisfaction = 0.0
+	_refresh_served(id)
 
 
-## Restore path: counters and module inputs from a tile exactly as saved.
+## Restore path: module inputs from a tile exactly as saved. The ledger entry
+## waits for _restore()'s served pass, once roads and power are back.
 func _index_restored_tile(tile: TileDelta) -> void:
 	var id := tile.id
 	_owner_arr[id] = tile.owner
@@ -857,7 +895,6 @@ func _index_restored_tile(tile: TileDelta) -> void:
 	var is_building := tile.has_building and tile.zone != SliceConstants.Zone.NONE
 	var tier := tile.building_tier if is_building else 0
 	if is_building:
-		_economy.add_building(tile.owner, tile.zone, tier, 1)
 		_active[id] = true
 		_active_stale = true
 	_zone_arr[id] = tile.zone
@@ -868,6 +905,29 @@ func _index_restored_tile(tile: TileDelta) -> void:
 	_roads.set_tier(id, tier)
 	if is_building:
 		_growth.set_satisfaction_q(id, tile.satisfaction)
+
+
+## Served = a building with a road and actual power. Moves the building into or
+## out of its faction's ledger when that changed since the last call.
+func _refresh_served(id: int) -> void:
+	var tile := _tiles[id]
+	var served := (
+		tile.has_building
+		and tile.zone != SliceConstants.Zone.NONE
+		and SimEconomy.is_faction(tile.owner)
+		and _roads.has_road(id)
+		and _grid.powered(id)
+	)
+	if served == (_served[id] != 0):
+		return
+	_served[id] = 1 if served else 0
+	_economy.add_building(tile.owner, tile.zone, tile.building_tier, 1 if served else -1)
+
+
+## Road access of both endpoints may have flipped: refresh their ledger entries.
+func _road_changed(a: Vector2i, b: Vector2i) -> void:
+	_refresh_served(SliceConstants.tile_id(a.x, a.y))
+	_refresh_served(SliceConstants.tile_id(b.x, b.y))
 
 
 ## Tier change from growth: counters and module inputs follow.
@@ -949,8 +1009,9 @@ func _settle(dirty: Dictionary, alerts: Array, power_touched: PackedInt32Array =
 			dirty[id] = true
 
 
-## Copies the grid's view of one tile into its TileDelta. A residential tile whose
-## actual power (covered and not brownout) flipped also gets a PowerAlert.
+## Copies the grid's view of one tile into its TileDelta and refreshes its ledger
+## entry. A residential tile whose actual power (covered and not brownout) flipped
+## also gets a PowerAlert.
 func _sync_power_tile(id: int, dirty: Dictionary, alerts: Array) -> void:
 	var tile := _tiles[id]
 	var covered := _grid.covered(id)
@@ -961,6 +1022,7 @@ func _sync_power_tile(id: int, dirty: Dictionary, alerts: Array) -> void:
 	tile.power_covered = covered
 	tile.brownout = dark
 	dirty[id] = true
+	_refresh_served(id)
 	if tile.zone == SliceConstants.Zone.R and was_powered != (covered and not dark):
 		alerts.append(_power_alert_event(tile))
 

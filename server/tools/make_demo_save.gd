@@ -14,12 +14,13 @@ extends SceneTree
 ## carry the starter layout (server/sim/starter_city.gd) in four reflections, each
 ## plant on the map-corner side of its block so no square reaches into a neighbour,
 ## joined by connector roads at the cross junctions. The three blocks nearest the
-## map corner are fully grown (R and C at tier 2, factories at tier 1), the far
+## map corner are fully grown (every lot at tier 2, factories included), the far
 ## block is young (everything at tier 1), and every block's spare lots are freshly
 ## zoned at tier 0. The outer strip stays claimed and bare. The city therefore grows
-## on a live server instead of decaying: every lot keeps the spacing the growth
-## model needs, each plant carries at most 48 of its POWER_PLANT_CAPACITY, and the
-## R / C / I mix keeps the demand triangle open at every tier.
+## on a live server instead of decaying: every lot keeps the starter spacing (edges
+## far under the congestion knee, smoke out of reach of R and C), each plant carries
+## at most 51 of its POWER_PLANT_CAPACITY, and the R / C / I mix keeps the demand
+## triangle open at every tier.
 ##
 ## The envelope is ServerPersistence.build_envelope() with an empty player table and a
 ## round that starts now and runs ROUND_SECONDS_DEFAULT, so a server started on it
@@ -214,13 +215,12 @@ static func _cross_index(flipped: bool) -> int:
 	return StarterCity.BLOCK - 1 - StarterCity.CROSS if flipped else StarterCity.CROSS
 
 
-## Grown blocks: R and C at BUILDING_TIER_MAX, factories at the starter tier. Young
-## blocks keep the starter tier. Spare lots join at tier 0 with SPARE_ZONES.
+## Grown blocks: every lot at BUILDING_TIER_MAX. Young blocks keep the starter tier.
+## Spare lots join at tier 0 with SPARE_ZONES.
 static func _develop(plan: StarterCity.Plan, grown: bool) -> void:
 	if grown:
 		for lot in plan.lots:
-			if int(lot[1]) != SliceConstants.Zone.I:
-				lot[2] = SliceConstants.BUILDING_TIER_MAX
+			lot[2] = SliceConstants.BUILDING_TIER_MAX
 	var index := 0
 	for cell in plan.empty_lots:
 		plan.lots.append([cell, SPARE_ZONES[index % SPARE_ZONES.size()], SliceConstants.BUILDING_TIER_MIN])

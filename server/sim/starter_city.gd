@@ -21,14 +21,14 @@ extends RefCounted
 ## (ring → hub → two lots) and one stub for the third factory. Buildings are only
 ## on road tiles with two empty road tiles between neighbouring buildings, lanes
 ## hang two buildings off a tier-0 hub, and the industry sits in the far corner.
-## Those three rules come from the growth model: a tier-1 building needs every
-## incident edge at load ≤ 1.5 (quantized congestion 1/8, satisfaction
-## 0.9 × 0.875 = 0.79 ≥ SAT_UP) to rise, two adjacent buildings load their edge
-## to 3 and never grow, and a factory pollutes residential tiles within
-## POLLUTION_RADIUS below SAT_UP. 9 R / 4 C / 3 I keeps the demand triangle open at
-## tier 1 (pop 27, jobs 24 C + 18 I) and after R and C reach tier 2 while the
-## factories stay at tier 1 (pop 72, jobs 64 + 18), with slack for a few extra
-## residential tiles. Load Σ (tier + 1) is 32 at the start and 45 fully grown.
+## The spacing keeps every edge far under the congestion knee (a lane lot's edge
+## carries 3 at tier 2, a ring building's edges at most 4; RoadNetwork has the
+## formula) so the town grows with margin to spare, and the factories sit at least
+## POLLUTION_RADIUS + 1 from every R and C lot, so their smoke (full weight on
+## residential, half on commercial, none on industry) reaches no one. 9 R / 4 C /
+## 3 I keeps the demand triangle open at tier 1 (pop 27, jobs 24 C + 18 I) and
+## fully grown (pop 72, jobs 64 + 48), with slack for a few extra residential
+## tiles. Load Σ (tier + 1) is 32 at the start and 48 fully grown.
 ##
 ## These are layout constants, not rules; they stay here on purpose (shared/ is
 ## frozen and SliceConstants holds rule numbers only).

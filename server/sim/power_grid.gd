@@ -6,16 +6,30 @@ extends RefCounted
 ## (2 × POWER_RADIUS + 1)² tiles around the plant, Chebyshev distance ≤ POWER_RADIUS
 ## (TileDelta.power_covered). A square, not a Manhattan diamond, so one plant at
 ## the centre of an 8×8 spawn block covers the whole block (81 tiles; the diamond
-## held 41 and left the block's corners dark). A plant's load is Σ (tier + 1) over
-## the building tiles in its square, regardless of owner and without sharing
-## between overlapping plants. load > capacity() puts every tile in that plant's
-## square into brownout; a tile is dark while any overloaded plant covers it.
-## Actual power is covered and not brownout.
+## held 41 and left the block's corners dark).
 ##
-## Coverage counts and loads are kept incrementally (add/remove plant, set_weight);
-## resolve() re-evaluates only the plants marked dirty since the last call, so a tick
-## with no structural change costs nothing here. set_crisis() marks every plant
-## dirty because capacity() changes.
+## A building weighs tier + 1 regardless of owner. A tile covered by n plants gives
+## each of them 1/n of its weight, so a plant's load is Σ weight / cover over its
+## square and a second plant placed beside an overloaded one takes over part of its
+## load instead of counting it twice. Shares are kept in integer units of
+## SHARE_UNIT / n (SHARE_UNIT = lcm(1..10) = 2520: up to ten overlapping plants split
+## exactly; beyond that the division rounds down a little, identically on add and
+## remove, so loads never drift and a restored world rebuilds the same numbers).
+## load > capacity() puts every tile in that plant's square into brownout; a tile is
+## dark while any overloaded plant covers it. Actual power is covered and not
+## brownout.
+##
+## Coverage counts and loads are kept incrementally: set_weight() is O(plants over
+## the tile); add_plant() / remove_plant() re-share the weights in the square among
+## the plants already there, O(square × plants over each tile). resolve()
+## re-evaluates only the plants marked dirty since the last call, so a tick with no
+## structural change costs nothing here. set_crisis() marks every plant dirty
+## because capacity() changes.
+
+## Units one tile's full weight is worth; a tile covered by n plants hands each
+## SHARE_UNIT / n of them.
+const SHARE_UNIT := 2520
+
 
 class Plant:
 	extends RefCounted
@@ -24,6 +38,7 @@ class Plant:
 	var owner: int = SliceConstants.Owner.NEUTRAL
 	## Tile ids inside the radius, clipped to the map.
 	var tiles: PackedInt32Array = PackedInt32Array()
+	## Σ weight × SHARE_UNIT / cover over tiles, in share units.
 	var load: int = 0
 	var over: bool = false
 
@@ -59,6 +74,13 @@ func _init() -> void:
 			_dy.append(dy)
 
 
+## Share units one plant gets from a tile covered by cover plants.
+static func share(cover: int) -> int:
+	if cover <= 0:
+		return 0
+	return SHARE_UNIT / cover
+
+
 ## POWER_PLANT_CAPACITY, times CRISIS_CAPACITY_FACTOR while the grid storm is on.
 func capacity() -> int:
 	if _crisis:
@@ -82,6 +104,10 @@ func covered(id: int) -> bool:
 	return _cover[id] > 0
 
 
+func cover_count(id: int) -> int:
+	return _cover[id]
+
+
 func brownout(id: int) -> bool:
 	return _dark[id] > 0
 
@@ -98,7 +124,14 @@ func plant_count() -> int:
 	return _plants.size()
 
 
-func plant_load(id: int) -> int:
+## Load of a plant in weight units (its shares summed); 0 without a plant. A whole
+## number while nothing in its square is shared.
+func plant_load(id: int) -> float:
+	return float(plant_load_units(id)) / float(SHARE_UNIT)
+
+
+## Load of a plant in share units.
+func plant_load_units(id: int) -> int:
 	if not _plants.has(id):
 		return 0
 	return _plants[id].load
@@ -117,8 +150,10 @@ func plant_ids_sorted() -> Array:
 	return ids
 
 
-## Adds a plant and returns the tile ids whose coverage switched on. The plant is
-## marked dirty; call resolve() to learn whether it is already over capacity.
+## Adds a plant and returns the tile ids whose coverage switched on. Every plant
+## already covering a tile in the square gives up part of that tile's weight to the
+## new one. The plants touched are marked dirty; call resolve() to learn which are
+## over capacity now.
 func add_plant(id: int, owner: int) -> PackedInt32Array:
 	var turned_on := PackedInt32Array()
 	if _plants.has(id):
@@ -129,10 +164,17 @@ func add_plant(id: int, owner: int) -> PackedInt32Array:
 	plant.tiles = _square(id)
 	var load := 0
 	for tile in plant.tiles:
-		_cover[tile] += 1
-		if _cover[tile] == 1:
+		var before := _cover[tile]
+		var weight := _weight[tile]
+		if before == 0:
 			turned_on.append(tile)
-		load += _weight[tile]
+		elif weight != 0:
+			var delta := weight * (share(before + 1) - share(before))
+			for other in _covering[tile]:
+				_plants[other].load += delta
+				_dirty[other] = true
+		_cover[tile] = before + 1
+		load += weight * share(before + 1)
 		var list: PackedInt32Array = _covering[tile]
 		list.append(id)
 		_covering[tile] = list
@@ -142,7 +184,8 @@ func add_plant(id: int, owner: int) -> PackedInt32Array:
 	return turned_on
 
 
-## Removes a plant and returns the tile ids whose coverage or brownout changed.
+## Removes a plant and returns the tile ids whose coverage or brownout changed. The
+## remaining plants over each tile take the removed plant's share back.
 func remove_plant(id: int) -> PackedInt32Array:
 	var changed := PackedInt32Array()
 	if not _plants.has(id):
@@ -152,14 +195,22 @@ func remove_plant(id: int) -> PackedInt32Array:
 	_dirty.erase(id)
 	var touched: Dictionary = {}
 	for tile in plant.tiles:
-		_cover[tile] -= 1
-		if _cover[tile] == 0:
-			touched[tile] = true
+		var before := _cover[tile]
+		_cover[tile] = before - 1
 		var list: PackedInt32Array = _covering[tile]
 		var at := list.find(id)
 		if at >= 0:
 			list.remove_at(at)
 		_covering[tile] = list
+		if before == 1:
+			touched[tile] = true
+			continue
+		var weight := _weight[tile]
+		if weight != 0:
+			var delta := weight * (share(before - 1) - share(before))
+			for other in list:
+				_plants[other].load += delta
+				_dirty[other] = true
 	if plant.over:
 		for tile in plant.tiles:
 			_dark[tile] -= 1
@@ -171,16 +222,18 @@ func remove_plant(id: int) -> PackedInt32Array:
 
 
 ## Load weight of one tile: tier + 1 for a building, 0 for none. Every plant that
-## covers the tile takes the difference and is marked dirty.
+## covers the tile takes its share of the difference and is marked dirty.
 func set_weight(id: int, weight: int) -> void:
 	var delta := weight - _weight[id]
 	if delta == 0:
 		return
 	_weight[id] = weight
-	if _cover[id] == 0:
+	var cover := _cover[id]
+	if cover == 0:
 		return
+	var units := delta * share(cover)
 	for plant_id in _covering[id]:
-		_plants[plant_id].load += delta
+		_plants[plant_id].load += units
 		_dirty[plant_id] = true
 
 
@@ -192,11 +245,11 @@ func resolve() -> Dictionary:
 	var alerts: Array = []
 	if _dirty.is_empty():
 		return {"tiles": flipped, "alerts": alerts}
-	var cap := capacity()
+	var cap_units := capacity() * SHARE_UNIT
 	var touched: Dictionary = {}
 	for id in _dirty:
 		var plant: Plant = _plants[id]
-		var over := plant.load > cap
+		var over := plant.load > cap_units
 		if over == plant.over:
 			continue
 		plant.over = over
@@ -227,14 +280,14 @@ func faction_capacity(faction: int) -> int:
 	return total
 
 
-## Σ load over the faction's plants.
+## Σ load over the faction's plants, rounded to whole weight units.
 func faction_load(faction: int) -> int:
 	var total := 0
 	for id in _plants:
 		var plant: Plant = _plants[id]
 		if plant.owner == faction:
 			total += plant.load
-	return total
+	return roundi(float(total) / float(SHARE_UNIT))
 
 
 ## Copy-on-write views for the growth pass; read only.
