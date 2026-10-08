@@ -9,6 +9,10 @@ extends Node
 ## changed since the last pull; MATCH_START, WELCOME, MATCH_END and a faction change
 ## mark every block. `updated` keeps its zero-argument shape because smoke_client
 ## connects a zero-argument handler to it.
+##
+## The alert feed carries Reject (in player words, see reject_message), PowerAlert,
+## CongestionAlert, and one local hint: the first confirmed zoning of a tile that no
+## road touches says which tool lays one (ROAD_HINT, once per round).
 
 signal updated
 ## Fired once per WELCOME, after faction and token are known.
@@ -19,8 +23,10 @@ signal command_sent(cmd: GameCommand)
 const MAX_ALERTS := 5
 ## CongestionAlert at or above this value is listed in the HUD alert feed.
 const ALERT_CONGESTION_MIN := 0.5
+## Local hint after the first zoning of a tile without a road; %d,%d is the tile.
+const ROAD_HINT := "No road at %d,%d · use tool 6 (Road)"
 
-enum AlertKind { REJECT, POWER, CONGESTION }
+enum AlertKind { REJECT, POWER, CONGESTION, HINT }
 
 var faction: int = SliceConstants.Owner.NEUTRAL
 var match_started: bool = false
@@ -42,6 +48,7 @@ var _subscribed: Dictionary = {}
 var _pending: Array[GameCommand] = []
 var _dirty_blocks: Dictionary = {}
 var _dirty_all: bool = false
+var _road_hint_sent: bool = false
 
 
 func _ready() -> void:
@@ -94,6 +101,37 @@ func summary(block_key: String) -> RegionSummary:
 
 func is_subscribed(block_key: String) -> bool:
 	return _subscribed.has(block_key)
+
+
+## Every authoritative tile the mirror holds (subscribed blocks only). Read-only use.
+func authoritative_tiles() -> Array:
+	return _tiles.values()
+
+
+## Tile ids touched by an authoritative edge, as a set {id: true}.
+func road_tile_ids() -> Dictionary:
+	var ids: Dictionary = {}
+	for key in _edges:
+		var body: EdgeDelta = _edges[key]
+		ids[SliceConstants.tile_id(body.a.x, body.a.y)] = true
+		ids[SliceConstants.tile_id(body.b.x, body.b.y)] = true
+	return ids
+
+
+## True when an edge touches the tile. With include_pending the optimistic overlay
+## counts (pending AddEdge adds, pending RemoveEdge hides), as the view draws it.
+func has_road(x: int, y: int, include_pending: bool = true) -> bool:
+	var cell := Vector2i(x, y)
+	if include_pending:
+		for edge in view_edges_in_block(InterestId.from_tile(x, y).key()):
+			if edge.a == cell or edge.b == cell:
+				return true
+		return false
+	for key in _edges:
+		var body: EdgeDelta = _edges[key]
+		if body.a == cell or body.b == cell:
+			return true
+	return false
 
 
 ## Authoritative tile with this client's pending commands laid over it.
@@ -244,6 +282,7 @@ func _apply(event: ServerEvent) -> void:
 			_pending.clear()
 			rejects.clear()
 			last_reject = null
+			_road_hint_sent = false
 			_dirty_all = true
 		ServerEvent.Kind.MATCH_END:
 			match_end = event.match_end
@@ -268,7 +307,8 @@ func _apply(event: ServerEvent) -> void:
 				_tiles.erase(tile.id)
 				return
 			_tiles[tile.id] = tile
-			_clear_pending_tile(tile.x, tile.y)
+			if _clear_pending_tile(tile.x, tile.y) and tile.zone != SliceConstants.Zone.NONE:
+				_maybe_road_hint(tile)
 		ServerEvent.Kind.EDGE_DELTA:
 			if event.edge_delta == null:
 				return
@@ -405,7 +445,13 @@ func _mark_dirty_command(cmd: GameCommand) -> void:
 			_mark_dirty_tile(cmd.tile_x, cmd.tile_y)
 
 
+## A repeat of a line already in the feed (same kind and text, e.g. the same congested
+## edge reported again) moves it to the top with the new time instead of filling the
+## five slots with copies.
 func _push_alert(kind: AlertKind, text: String) -> void:
+	for i in range(alerts.size() - 1, -1, -1):
+		if int(alerts[i]["kind"]) == kind and str(alerts[i]["text"]) == text:
+			alerts.remove_at(i)
 	alerts.append({
 		"kind": kind,
 		"time": Time.get_time_string_from_system(),
@@ -415,6 +461,16 @@ func _push_alert(kind: AlertKind, text: String) -> void:
 		alerts.pop_front()
 
 
+## The server confirmed a zoning of this tile (the pending SetZone was just cleared by
+## its TileDelta). Said once per round, only when no authoritative edge touches the tile.
+func _maybe_road_hint(tile: TileDelta) -> void:
+	if _road_hint_sent or has_road(tile.x, tile.y, false):
+		return
+	_road_hint_sent = true
+	_push_alert(AlertKind.HINT, ROAD_HINT % [tile.x, tile.y])
+
+
+## Alert line for a Reject: the command and its target, then the reason in player words.
 func _reject_text(reject: CommandReject) -> String:
 	var target := ""
 	var kind := reject.kind
@@ -430,14 +486,60 @@ func _reject_text(reject: CommandReject) -> String:
 				target = " %d%%" % roundi(reject.command.rate * 100.0)
 			_:
 				target = " %d,%d" % [reject.command.tile_x, reject.command.tile_y]
-	var detail := ""
-	if not reject.detail.is_empty():
-		detail = " (%s)" % reject.detail
-	return "Rejected %s%s: %s%s" % [command_name(kind), target, reason_name(reject.reason), detail]
+	return "%s%s: %s" % [command_name(kind), target, reject_message(reject)]
 
 
-func _clear_pending_tile(x: int, y: int) -> void:
+## Reason of a Reject in player words. NOT_NEUTRAL is split by the mirror's owner of the
+## target tile; the server answers OPPONENT_IMMUTABLE before NOT_NEUTRAL for the other
+## faction's tiles, so that code gets the same words. INSUFFICIENT_FUNDS carries the
+## price as detail "cost_<n>". Other codes keep their name and detail.
+func reject_message(reject: CommandReject) -> String:
+	match reject.reason:
+		ReasonCode.Id.NOT_NEUTRAL:
+			var owner := SliceConstants.Owner.NEUTRAL
+			if reject.command != null:
+				var current := tile(reject.command.tile_x, reject.command.tile_y)
+				if current != null:
+					owner = current.owner
+			if owner == faction and faction != SliceConstants.Owner.NEUTRAL:
+				return "Already yours"
+			if owner != SliceConstants.Owner.NEUTRAL:
+				return "Owned by the other faction"
+			return "Not a neutral tile"
+		ReasonCode.Id.OPPONENT_IMMUTABLE:
+			return "Owned by the other faction"
+		ReasonCode.Id.NOT_ADJACENT:
+			return "Claim tiles next to your territory"
+		ReasonCode.Id.NOT_OWNER:
+			return "Not your tile"
+		ReasonCode.Id.EDGE_RULE:
+			return "Roads need both ends on your tiles"
+		ReasonCode.Id.INSUFFICIENT_FUNDS:
+			var cost := reject_cost(reject.detail)
+			if cost >= 0:
+				return "Not enough treasury (cost %d)" % cost
+			return "Not enough treasury"
+		_:
+			if reject.detail.is_empty():
+				return reason_name(reject.reason)
+			return "%s (%s)" % [reason_name(reject.reason), reject.detail]
+
+
+## The n of a "cost_<n>" reject detail, or -1.
+static func reject_cost(detail: String) -> int:
+	if not detail.begins_with("cost_"):
+		return -1
+	var digits := detail.substr(5)
+	if not digits.is_valid_int():
+		return -1
+	return int(digits)
+
+
+## Drops the pending tile commands on (x, y). Returns true when one of them zoned the
+## tile (SetZone with a zone), which is what the road hint listens for.
+func _clear_pending_tile(x: int, y: int) -> bool:
 	var kept: Array[GameCommand] = []
+	var zoned := false
 	for cmd in _pending:
 		var tile_cmd := (
 			cmd.kind == GameCommand.Kind.CLAIM_TILE
@@ -447,9 +549,12 @@ func _clear_pending_tile(x: int, y: int) -> void:
 			or cmd.kind == GameCommand.Kind.REMOVE_POWER
 		)
 		if tile_cmd and cmd.tile_x == x and cmd.tile_y == y:
+			if cmd.kind == GameCommand.Kind.SET_ZONE and cmd.zone != SliceConstants.Zone.NONE:
+				zoned = true
 			continue
 		kept.append(cmd)
 	_pending = kept
+	return zoned
 
 
 func _clear_pending_edge(a: Vector2i, b: Vector2i) -> void:

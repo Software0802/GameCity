@@ -1,5 +1,8 @@
 # Stub showcase. Frames A's spawn and B's patch, then drives every tool through
-# synthetic mouse input (client/dev/input_script.gd). Run with:
+# synthetic mouse input (client/dev/input_script.gd). Along the way the opening guide
+# ticks all four steps (claim, zone, road, power on the lot at 8,2), the road hint fires
+# once (the R zoning comes before the road), and the two rejects show in player words;
+# `guide` lines print that state for the log. Run with:
 #   godot --path . -- --stub --input-script client/dev/scripts/stub_showcase.txt \
 #     --screenshot /tmp/gamecity_stub.png --screenshot-frames 200
 # Ortho sizes are metres (CameraRig.TILE = 30 m per tile).
@@ -21,20 +24,22 @@ click 8 2
 click 9 2
 click 8 3
 wait 5
-# Zone them: R painted by drag, C by click.
+# Zone them: R painted by drag, C by click. 8,2 has no road yet: one "No road at 8,2" hint.
 tool zone_r
 drag 8 2 9 2
 tool zone_c
 click 8 3
 wait 5
+guide
 # Road from inside the spawn across the new lots: two orthogonal AddEdge steps.
 tool road
 drag 7 2 9 2
 wait 5
-# Power plant on the new R lot.
+# Power plant on the new R lot: covers 8,2 and 9,2, so the guide completes here.
 tool power
 click 9 2
 wait 5
+guide
 # Two rejects for the alert feed: B's tile (OPPONENT_IMMUTABLE), then a far tile (NOT_ADJACENT).
 tool claim
 click 12 2
@@ -54,3 +59,4 @@ wait 5
 tool zone_i
 hover 10 3
 wait 30
+guide

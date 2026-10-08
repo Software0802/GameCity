@@ -1,0 +1,26 @@
+# Opening experience on the stub, seen from the opening view: no focus / zoom lines, the
+# camera stays where WELCOME put it (A's spawn block, presentation.gd START_VIEW_SIZE).
+# Claims and zones one lot east of the spawn so the guide ticks steps 1 and 2 and the road
+# hint fires, then two rejects in player words (an own tile, a far tile), then hovers the
+# new lot so the status line shows its owner / zone / tier / road / power / satisfaction.
+#   godot --path . -- --stub --input-script client/dev/scripts/stub_onboarding.txt \
+#     --screenshot client/dev/screenshots/stub_onboarding.png --screenshot-frames 120
+wait 20
+tool claim
+click 8 3
+wait 5
+# Zoning a lot no road touches: "No road at 8,3 · use tool 6 (Road)" (once per round).
+tool zone_r
+click 8 3
+wait 5
+# Own tile: "Already yours". Far tile: "Claim tiles next to your territory".
+tool claim
+click 3 3
+wait 5
+click 10 5
+wait 5
+rclick
+hover 8 3
+wait 10
+guide
+wait 10
